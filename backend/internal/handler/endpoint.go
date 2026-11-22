@@ -36,6 +36,8 @@ const (
 )
 
 const EndpointAntigravityGenerateContent = "/v1internal:streamGenerateContent"
+const EndpointDevinChat = "/exa.api_server_pb.ApiServerService/GetChatMessage"
+const EndpointMetaResponses = "/v1/responses"
 
 // gin.Context keys used by the middleware and helpers below.
 const (

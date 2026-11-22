@@ -321,6 +321,8 @@ export default {
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
+        devin: 'Devin',
+        meta: 'Meta Muse',
       },
       cnProviders: {
         accountMode: {
@@ -423,6 +425,12 @@ export default {
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         grokOauth: 'Grok OAuth',
+        devinOauth: 'Devin OAuth / Session Token',
+        devinApikey: '直接输入 Devin Token / Key',
+        kimiOauth: 'Kimi Code 设备码登录（Coding Plan）',
+        kimiApikey: '通过 API Key 接入（按量付费 / Coding Plan）',
+        metaOauth: 'Meta Muse 设备码授权 / DCA Token',
+        metaApikey: '直接输入 Meta Muse API Key',
         antigravityApikey: '通过 Base URL + API Key 连接',
         upstream: '对接上游',
         upstreamDesc: '通过 Base URL + API Key 连接上游'
@@ -1583,6 +1591,56 @@ export default {
           validateAndCreate: '验证并创建账号',
           pleaseEnterRefreshToken: '请输入 Refresh Token',
           failedToValidateRT: '验证 Refresh Token 失败'
+        },
+        devin: {
+          title: 'Devin 账户授权',
+          followSteps: '请按照以下步骤完成 Devin 账户的授权：',
+          step1GenerateUrl: '生成授权链接',
+          generateAuthUrl: '生成授权链接',
+          step2OpenUrl: '在浏览器中打开链接并登录 Devin',
+          openUrlDesc: '请在新标签页中打开授权链接，登录您的 Devin 账户并完成授权。',
+          importantNotice: '授权完成后，页面会显示授权码（或跳转回调链接），请将其粘贴到下方输入框。',
+          step3EnterCode: '输入授权码或回调链接',
+          authCodeDesc: '粘贴 Devin 页面给出的授权码（或完整回调 URL）：',
+          authCode: '授权码或回调链接',
+          authCodePlaceholder: '粘贴授权码或包含 code=... 的完整回调链接',
+          authCodeHint: '支持直接粘贴授权码，或粘贴完整回调链接由系统自动提取',
+          failedToGenerateUrl: '生成 Devin 授权链接失败',
+          missingExchangeParams: '缺少授权码或会话 ID',
+          failedToExchangeCode: 'Devin 授权码兑换失败',
+          sessionTokenAuth: '手动输入 Token',
+          sessionTokenDesc: '直接粘贴 Devin CLI / Desktop 的 session token（devin-session-token$...）或服务密钥（cog_...），系统将自动验证账号与额度。',
+          sessionTokenPlaceholder: '粘贴 devin-session-token$... 或 cog_...',
+          validating: '验证中...',
+          validateAndCreate: '验证并创建账号',
+          pleaseEnterToken: '请输入 Devin Session Token 或 API Key',
+          failedToValidateToken: '验证 Devin 凭据失败'
+        },
+        deviceFlow: {
+          deviceTab: '设备码授权',
+          start: '获取设备授权码',
+          restart: '重新获取授权码',
+          userCodeLabel: '设备授权码',
+          verificationUrlLabel: '授权页面',
+          openVerificationPage: '打开授权页面',
+          waitingApproval: '正在等待您在浏览器中完成授权...',
+          expired: '设备授权码已过期，请重新获取'
+        },
+        kimi: {
+          title: 'Kimi Code 账户授权',
+          domainLabel: 'Kimi 认证域名',
+          domainGlobal: '国际 / 通用（auth.kimi.com）',
+          domainAlt: '备用域名（auth.kimi.ai）',
+          deviceDesc: '点击下方按钮生成设备授权码，在浏览器登录 Kimi Code 账户并确认授权后，系统将自动完成接入并开启 Coding Plan 自适应协议。'
+        },
+        meta: {
+          title: 'Meta Muse 账户授权',
+          directTokenTab: '直接粘贴 Token / Key',
+          deviceDesc: '点击下方按钮生成 Meta 设备授权码，在浏览器登录 Meta 账户并确认授权后，系统将自动换取并签发 Muse Code API Key。',
+          directTokenDesc: '直接粘贴已有的 Meta 设备授权令牌（dca:...，系统将自动签发 API Key）或直接粘贴 Meta Muse API Key。',
+          directTokenPlaceholder: '粘贴 dca:... 或 Meta Muse API Key',
+          pleaseEnterToken: '请输入 Meta DCA Token 或 API Key',
+          failedToValidateToken: '验证 Meta 凭据失败'
         }
       },
       // Gemini specific (platform-wide)

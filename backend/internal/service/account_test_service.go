@@ -143,6 +143,8 @@ type AccountTestService struct {
 	claudeTokenProvider       *ClaudeTokenProvider
 	grokTokenProvider         *GrokTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
+	devinGatewayService       *DevinGatewayService
+	metaGatewayService        *MetaGatewayService
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	settingService            *SettingService
@@ -277,6 +279,20 @@ func NewAccountTestService(
 		httpUpstream:              httpUpstream,
 		cfg:                       cfg,
 		tlsFPProfileService:       tlsFPProfileService,
+	}
+}
+
+// SetDevinGatewayService attaches the Devin gateway service for Devin account tests and model sync.
+func (s *AccountTestService) SetDevinGatewayService(svc *DevinGatewayService) {
+	if s != nil {
+		s.devinGatewayService = svc
+	}
+}
+
+// SetMetaGatewayService attaches the Meta Muse gateway service for account tests and model sync.
+func (s *AccountTestService) SetMetaGatewayService(svc *MetaGatewayService) {
+	if s != nil {
+		s.metaGatewayService = svc
 	}
 }
 
@@ -418,6 +434,13 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return s.routeAntigravityTest(c, account, modelID, prompt)
 	}
 
+	if account.Platform == PlatformDevin {
+		return s.testDevinAccountConnection(c, account, modelID, prompt)
+	}
+	if account.Platform == PlatformMeta {
+		return s.testMetaAccountConnection(c, account, modelID, prompt)
+	}
+
 	// 按模型分流的多模型聚合平台（OpenCode、Command Code 等）。
 	if account.routesByModel() {
 		return s.testModelRoutedAccountConnection(c, account, modelID, prompt)
@@ -466,7 +489,7 @@ func (s *AccountTestService) testModelRoutedAccountConnection(c *gin.Context, ac
 }
 
 func (s *AccountTestService) testModelRoutedResponsesConnection(c *gin.Context, account *Account, testModelID string) error {
-	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
+	authToken := s.resolveCNProviderTestToken(c.Request.Context(), account)
 	if authToken == "" {
 		return s.sendErrorAndEnd(c, "No API key available")
 	}
@@ -489,7 +512,7 @@ func (s *AccountTestService) testCNProviderChatCompletionsConnection(c *gin.Cont
 	}
 	testModelID = account.GetMappedModel(testModelID)
 
-	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
+	authToken := s.resolveCNProviderTestToken(c.Request.Context(), account)
 	if authToken == "" {
 		return s.sendErrorAndEnd(c, "No API key available")
 	}
@@ -851,7 +874,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var apiURL string
 	var isOAuth bool
 
-	if credentialAccount.IsOAuth() {
+	if credentialAccount.IsOAuth() && !credentialAccount.IsKimiOAuth() {
 		isOAuth = true
 		// Agent Identity signs each request and does not retain the OAuth token.
 		if !credentialAccount.IsOpenAIAgentIdentity() {
@@ -863,9 +886,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 		// OAuth uses ChatGPT internal API
 		apiURL = chatgptCodexAPIURL
-	} else if credentialAccount.Type == "apikey" {
-		// API Key - use Platform API
-		authToken = credentialAccount.GetOpenAIProtocolAPIKey()
+	} else if credentialAccount.Type == "apikey" || credentialAccount.IsKimiOAuth() {
+		// API Key or Kimi Code OAuth - use Platform API
+		authToken = s.resolveCNProviderTestToken(ctx, credentialAccount)
 		if authToken == "" {
 			return s.sendErrorAndEnd(c, "No API key available")
 		}
@@ -950,6 +973,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		// 与该账号真实出站的身份不是同一个（issue #3901 的配对不变式由收口保证）。
 		enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
 	}
+
+	// Kimi Code OAuth 账号注入 X-Msh-* CLI 标识头
+	applyKimiOAuthHeaders(req, credentialAccount)
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	credentialAccount.ApplyHeaderOverrides(req.Header)
@@ -2158,6 +2184,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	// 官方 OpenCode / Command Code 上游收敛为规范客户端 UA，与真实转发路径一致。
 	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
+	applyKimiOAuthHeaders(req, account)
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	account.ApplyHeaderOverrides(req.Header)
@@ -2532,6 +2559,64 @@ func antigravityConnectionTestModel(modelID string) string {
 		return defaultAntigravityTestModel
 	}
 	return modelID
+}
+
+func (s *AccountTestService) testDevinAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
+	ctx := c.Request.Context()
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		testModelID = "swe-2-flash"
+	}
+	if s.devinGatewayService == nil {
+		return s.sendErrorAndEnd(c, "Devin gateway service not configured")
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+
+	result, err := s.devinGatewayService.TestConnectionWithPrompt(ctx, account, testModelID, prompt)
+	if err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+	if result.Text != "" {
+		s.sendEvent(c, TestEvent{Type: "content", Text: result.Text})
+	}
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
+func (s *AccountTestService) testMetaAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
+	ctx := c.Request.Context()
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		testModelID = "muse-ember-1.0"
+	}
+	if s.metaGatewayService == nil {
+		return s.sendErrorAndEnd(c, "Meta Muse gateway service not configured")
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+
+	text, err := s.metaGatewayService.TestConnectionWithPrompt(ctx, account, testModelID, prompt)
+	if err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+	if text != "" {
+		s.sendEvent(c, TestEvent{Type: "content", Text: text})
+	}
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
 }
 
 // buildGeminiAPIKeyRequest builds request for Gemini API Key accounts

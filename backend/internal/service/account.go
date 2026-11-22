@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/devin"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
@@ -285,6 +286,10 @@ func (a *Account) IsTypeSafe() bool {
 	return a != nil && a.Platform == PlatformTypeSafe
 }
 
+func (a *Account) IsDevin() bool {
+	return a != nil && a.Platform == PlatformDevin
+}
+
 func (a *Account) IsGrokOAuth() bool {
 	return a.IsGrok() && a.Type == AccountTypeOAuth
 }
@@ -292,6 +297,84 @@ func (a *Account) IsGrokOAuth() bool {
 // IsKimi / IsZhipu / IsDeepseek 标识国产 OpenAI 兼容供应商账号。
 func (a *Account) IsKimi() bool {
 	return a.Platform == PlatformKimi
+}
+
+func (a *Account) IsMeta() bool {
+	return a.Platform == PlatformMeta
+}
+
+func (a *Account) IsKimiOAuth() bool {
+	return a != nil && a.Platform == PlatformKimi && a.Type == AccountTypeOAuth
+}
+
+func (a *Account) GetKimiAccessToken() string {
+	if a == nil || a.Platform != PlatformKimi {
+		return ""
+	}
+	return strings.TrimSpace(a.GetCredential("access_token"))
+}
+
+func (a *Account) GetKimiRefreshToken() string {
+	if a == nil || a.Platform != PlatformKimi {
+		return ""
+	}
+	return strings.TrimSpace(a.GetCredential("refresh_token"))
+}
+
+func (a *Account) GetKimiDeviceID() string {
+	if a == nil || a.Platform != PlatformKimi {
+		return ""
+	}
+	return strings.TrimSpace(a.GetCredential("device_id"))
+}
+
+func (a *Account) GetKimiDomain() string {
+	if a == nil || a.Platform != PlatformKimi {
+		return "kimi.com"
+	}
+	if d := strings.TrimSpace(a.GetCredential("domain")); d != "" {
+		return d
+	}
+	if strings.Contains(strings.ToLower(a.GetCredential("base_url")), "kimi.ai") {
+		return "kimi.ai"
+	}
+	return "kimi.com"
+}
+
+func (a *Account) GetMetaAPIKey() string {
+	if a == nil || a.Platform != PlatformMeta {
+		return ""
+	}
+	if k := strings.TrimSpace(a.GetCredential("api_key")); k != "" && !strings.HasPrefix(k, "dca:") {
+		return k
+	}
+	if t := strings.TrimSpace(a.GetCredential("access_token")); t != "" && !strings.HasPrefix(t, "dca:") {
+		return t
+	}
+	return ""
+}
+
+func (a *Account) GetMetaDCAToken() string {
+	if a == nil || a.Platform != PlatformMeta {
+		return ""
+	}
+	if d := strings.TrimSpace(a.GetCredential("dca_token")); d != "" {
+		return d
+	}
+	if t := strings.TrimSpace(a.GetCredential("access_token")); strings.HasPrefix(t, "dca:") {
+		return t
+	}
+	return ""
+}
+
+func (a *Account) GetMetaBaseURL() string {
+	if a == nil || a.Platform != PlatformMeta {
+		return "https://api.meta.ai/v1"
+	}
+	if b := strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/"); b != "" {
+		return b
+	}
+	return "https://api.meta.ai/v1"
 }
 
 func (a *Account) IsZhipu() bool {
@@ -1157,6 +1240,30 @@ func (a *Account) GetTypeSafeAPIKey() string {
 	return strings.TrimSpace(a.GetCredential("api_key"))
 }
 
+// GetDevinToken extracts the normalized Devin session token or cog_... API key.
+func (a *Account) GetDevinToken() string {
+	if a == nil || !a.IsDevin() {
+		return ""
+	}
+	for _, key := range []string{"session_token", "access_token", "api_key"} {
+		if raw := strings.TrimSpace(a.GetCredential(key)); raw != "" {
+			return devin.FormatSessionToken(raw)
+		}
+	}
+	return ""
+}
+
+// GetDevinBaseURL returns the configured Devin Connect-RPC server URL or DefaultServerURL.
+func (a *Account) GetDevinBaseURL() string {
+	if a == nil || !a.IsDevin() {
+		return devin.DefaultServerURL
+	}
+	if base := strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/"); base != "" {
+		return base
+	}
+	return devin.DefaultServerURL
+}
+
 func (a *Account) GetExtraString(key string) string {
 	if a.Extra == nil {
 		return ""
@@ -1864,6 +1971,9 @@ func (a *Account) GetOpenAIApiKey() string {
 func (a *Account) GetOpenAIProtocolAPIKey() string {
 	if a == nil {
 		return ""
+	}
+	if a.IsKimiOAuth() {
+		return a.GetKimiAccessToken()
 	}
 	if a.IsMultiProtocolAPIKey() {
 		if a.Type != AccountTypeAPIKey {

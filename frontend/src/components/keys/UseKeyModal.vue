@@ -1319,6 +1319,8 @@ function generateRoutedCodexFiles(
     deepseek: 'deepseek-v4-pro',
     minimax: 'MiniMax-M3',
     opencode_go: 'glm-5.3',
+    devin: 'claude-sonnet-4-6',
+    meta: 'muse-ember-1.0',
     composite: 'gpt-6.1-sol'
   }
   const preferredModel = preferredModels[platform] || ''
@@ -1337,6 +1339,8 @@ function generateRoutedCodexFiles(
     typesafe: 'TypeSafe / Jev',
     command_code: 'Command Code',
     cline: 'Cline',
+    devin: 'Devin',
+    meta: 'Meta Muse',
     composite: 'Composite'
   }
   const label = labels[platform]

@@ -37,7 +37,13 @@ const (
 	PlatformCommandCode = "command_code"
 	// PlatformCline 是 Cline API（多模型聚合，OpenAI 兼容 Chat Completions；按量积分计费，
 	// 另有 ClinePass 订阅）。
-	PlatformCline     = "cline"
+	PlatformCline = "cline"
+	// PlatformDevin 是 Devin（Cognition / Windsurf）Connect-RPC 多模型代理平台，
+	// 支持 OAuth PKCE / session token 与 API Key（cog_...）接入。
+	PlatformDevin = "devin"
+	// PlatformMeta 是 Meta Muse Code（api.meta.ai）代理平台，
+	// 支持 RFC 8628 Device Code OAuth（自动铸造 API Key）与 API Key 接入。
+	PlatformMeta      = "meta"
 	PlatformComposite = "composite"
 )
 

@@ -18,6 +18,9 @@ import usageAPI from './usage'
 import geminiAPI from './gemini'
 import antigravityAPI from './antigravity'
 import grokAPI from './grok'
+import devinAPI from './devin'
+import kimiAPI from './kimi'
+import metaAPI from './meta'
 import cnProvidersAPI from './cnProviders'
 import userAttributesAPI from './userAttributes'
 import opsAPI from './ops'
@@ -56,6 +59,9 @@ export const adminAPI = {
   gemini: geminiAPI,
   antigravity: antigravityAPI,
   grok: grokAPI,
+  devin: devinAPI,
+  kimi: kimiAPI,
+  meta: metaAPI,
   cnProviders: cnProvidersAPI,
   userAttributes: userAttributesAPI,
   ops: opsAPI,
@@ -92,6 +98,9 @@ export {
   geminiAPI,
   antigravityAPI,
   grokAPI,
+  devinAPI,
+  kimiAPI,
+  metaAPI,
   cnProvidersAPI,
   userAttributesAPI,
   opsAPI,

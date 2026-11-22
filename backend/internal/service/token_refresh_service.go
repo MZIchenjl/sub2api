@@ -175,6 +175,22 @@ func (s *TokenRefreshService) SetRefreshAPI(api *OAuthRefreshAPI) {
 	s.refreshAPI = api
 }
 
+// RegisterAdditionalRefresher appends a platform TokenRefresher (e.g. Kimi / Meta OAuth).
+func (s *TokenRefreshService) RegisterAdditionalRefresher(platform string, refresher TokenRefresher) {
+	if s == nil || platform == "" || refresher == nil {
+		return
+	}
+	var executor OAuthRefreshExecutor
+	if ex, ok := refresher.(OAuthRefreshExecutor); ok {
+		executor = ex
+	}
+	s.registrations = append(s.registrations, tokenRefreshRegistration{
+		platform:  platform,
+		refresher: refresher,
+		executor:  executor,
+	})
+}
+
 // SetRefreshPolicy 注入后台刷新调用侧策略（用于显式化平台/场景差异行为）。
 func (s *TokenRefreshService) SetRefreshPolicy(policy BackgroundRefreshPolicy) {
 	s.refreshPolicy = policy

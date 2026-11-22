@@ -179,8 +179,14 @@ const mistralModels = [
   'pixtral-12b-2409', 'pixtral-large-latest'
 ]
 
-// Meta Llama
+// Meta Muse & Llama
 const metaModels = [
+  'muse-ember-1.0',
+  'muse-wonder-1.0', 'muse-wonder-1.0-contributor',
+  'muse-wonder-full-1.0', 'muse-wonder-full-1.0-contributor',
+  'muse-spark-1.3', 'muse-spark-1.3-contributor',
+  'muse-spark-1.2', 'muse-spark-1.2-contributor',
+  'muse-spark-1.1',
   'llama-3.3-70b-instruct',
   'llama-3.2-90b-vision-instruct', 'llama-3.2-11b-vision-instruct',
   'llama-3.2-3b-instruct', 'llama-3.2-1b-instruct',
@@ -549,6 +555,15 @@ export function getModelsByPlatform(platform: string): string[] {
       'hy4-preview', 'hy3', 'omen-alpha'
     ]
     case 'typesafe': return ['jev-latest']
+    case 'devin': return [
+      'swe-2', 'swe-2-flash',
+      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-2', 'claude-haiku-5-5',
+      'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5',
+      'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-1-sol', 'gpt-6-1-terra',
+      'gemini-4-carbon', 'gemini-4-argon', 'gemini-3-8-flash',
+      'grok-4-7', 'grok-4-6',
+      'glm-5-3', 'glm-5-2', 'kimi-k3-1-pro', 'deepseek-v4-pro', 'deepseek-v4-flash'
+    ]
     case 'doubao': return doubaoModels
     case 'minimax': return minimaxModels
     case 'baidu': return baiduModels
