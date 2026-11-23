@@ -69,14 +69,12 @@ func requirePrice(t *testing.T, want, got *float64, field string) {
 	require.InDelta(t, *want, *got, 1e-15, field)
 }
 
-// mustCatalogFromJSON 走生产解析路径（含 above_XXXk 折算）构造目录 stub；场景表无 *testing.T，解析失败直接 panic。
+// mustCatalogFromJSON 走生产 models.dev 解析路径构造目录 stub；场景表无 *testing.T，解析失败直接 panic。
 func mustCatalogFromJSON(body string) *PricingService {
-	s := &PricingService{}
-	data, err := s.parsePricingData([]byte(body))
-	if err != nil {
+	s := NewPricingService(nil, nil)
+	if err := s.LoadModelsDevJSON([]byte(body)); err != nil {
 		panic(err)
 	}
-	s.pricingData = data
 	return s
 }
 

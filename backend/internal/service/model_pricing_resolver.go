@@ -9,10 +9,10 @@ import (
 
 // PricingSource 定价来源标识
 const (
-	PricingSourceGroup    = "group"
-	PricingSourceChannel  = "channel"
-	PricingSourceLiteLLM  = "litellm"
-	PricingSourceFallback = "fallback"
+	PricingSourceGroup     = "group"
+	PricingSourceChannel   = "channel"
+	PricingSourceModelsDev = "models_dev"
+	PricingSourceFallback  = "fallback"
 )
 
 // ResolvedPricing 统一定价解析结果
@@ -67,10 +67,30 @@ type PricingInput struct {
 }
 
 // Resolve 解析模型定价。
-// 1. 获取基础定价（LiteLLM → Fallback）
-// 2. 如果指定了 GroupID，查找渠道定价并覆盖
+// 解析链：分组模型定价覆盖（模型定价页按分组配置 / Group.ModelPricing）→ Channel → models.dev 默认价格 → Fallback。
+// 没有单独设置价格的分组自动使用默认价格。
 func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) *ResolvedPricing {
 	longContextPricingEnabled := input.Group == nil || input.Group.LongContextPricingEnabled
+
+	// 0. 优先检查模型定价管理中针对该分组单独配置的价格（切换缓存供应商或自定义价格）
+	var effectiveGroupID int64
+	if input.GroupID != nil && *input.GroupID > 0 {
+		effectiveGroupID = *input.GroupID
+	} else if input.Group != nil && input.Group.ID > 0 {
+		effectiveGroupID = input.Group.ID
+	}
+	if effectiveGroupID > 0 && r.billingService != nil {
+		if groupCatalogPricing, ok := r.billingService.GetGroupCatalogModelPricing(effectiveGroupID, input.Model); ok && groupCatalogPricing != nil {
+			return &ResolvedPricing{
+				Mode:                      BillingModeToken,
+				BasePricing:               groupCatalogPricing,
+				Source:                    PricingSourceGroup,
+				SupportsCacheBreakdown:    groupCatalogPricing.SupportsCacheBreakdown,
+				longContextPricingEnabled: longContextPricingEnabled,
+			}
+		}
+	}
+
 	if groupPricing := matchGroupModelPricing(input.Group, input.Model); groupPricing != nil {
 		// Group token cards only override the first-tier / flat rates.
 		// Long-context ladders come from official presets, gated by the checkbox.
@@ -167,15 +187,15 @@ func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {
 	return wildcard
 }
 
-// resolveBasePricing 从 LiteLLM 或 Fallback 获取基础定价
+// resolveBasePricing 从 models.dev 默认目录或 Fallback 获取基础定价
 func (r *ModelPricingResolver) resolveBasePricing(model string) (*ModelPricing, string) {
 	pricing, err := r.billingService.GetModelPricing(model)
 	if err != nil {
-		slog.Debug("failed to get model pricing from LiteLLM, using fallback",
+		slog.Debug("failed to get model pricing from models.dev catalog, using fallback",
 			"model", model, "error", err)
 		return nil, PricingSourceFallback
 	}
-	return pricing, PricingSourceLiteLLM
+	return pricing, PricingSourceModelsDev
 }
 
 // lookupChannelPricingNormalized 查找渠道定价：先用字面模型名做精确/通配匹配，

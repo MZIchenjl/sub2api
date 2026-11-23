@@ -165,7 +165,7 @@ func TestDisplayPricingPreservesConfiguredReasoningEffortMultipliers(t *testing.
 	raw := &ChannelModelPricing{ReasoningEffortMultipliers: map[string]float64{"high": 1.5, "max": 3}}
 	for _, mode := range []BillingMode{BillingModeToken, BillingModePerRequest, BillingModeImage} {
 		raw.BillingMode = mode
-		display := synthesizePricingFromLiteLLM(&LiteLLMModelPricing{InputCostPerToken: 1e-6, OutputCostPerImage: 0.1}, raw)
+		display := synthesizePricingFromCatalog(&CatalogModelPricing{InputCostPerToken: 1e-6, OutputCostPerImage: 0.1}, raw)
 		require.Equal(t, raw.ReasoningEffortMultipliers, display.ReasoningEffortMultipliers)
 		display.ReasoningEffortMultipliers["high"] = 9
 		require.Equal(t, 1.5, raw.ReasoningEffortMultipliers["high"])

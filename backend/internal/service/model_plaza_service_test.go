@@ -207,7 +207,7 @@ func TestListPlazaGroups_SortedByRateMultiplierAsc(t *testing.T) {
 }
 
 func TestListPlazaGroups_OfficialPricingFill(t *testing.T) {
-	pricingSvc := newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+	pricingSvc := newStubPricingServiceFromMap(map[string]*CatalogModelPricing{
 		"claude-sonnet": {
 			Mode:                                "chat",
 			InputCostPerToken:                   3e-6,

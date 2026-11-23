@@ -452,14 +452,13 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextOutputMultiplier: 5,
 	}
 	for _, model := range []string{"claude-fable-5-2", "claude-mythos-5-2"} {
-		p := claude52FallbackPricing
 		s.fallbackPrices[model] = &ModelPricing{
-			InputPricePerToken:         p.InputCostPerToken,
-			OutputPricePerToken:        p.OutputCostPerToken,
-			CacheCreationPricePerToken: p.CacheCreationInputTokenCost,
-			CacheCreation5mPrice:       p.CacheCreationInputTokenCost,
-			CacheCreation1hPrice:       p.CacheCreationInputTokenCostAbove1hr,
-			CacheReadPricePerToken:     p.CacheReadInputTokenCost,
+			InputPricePerToken:         8e-6,
+			OutputPricePerToken:        40e-6,
+			CacheCreationPricePerToken: 10e-6,
+			CacheCreation5mPrice:       10e-6,
+			CacheCreation1hPrice:       16e-6,
+			CacheReadPricePerToken:     0.2e-6,
 			SupportsCacheBreakdown:     true,
 		}
 	}
@@ -1157,11 +1156,10 @@ func (s *BillingService) initFallbackPricing() {
 func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	modelLower := normalizeAntigravityClaudeTierAlias(strings.ToLower(model))
 	if modelLower == "gpt-image-2.6-flare" || modelLower == "gpt-image-2.6-sunburst" {
-		p := openAIGPTImage25FallbackPricing
 		return &ModelPricing{
-			InputPricePerToken: p.InputCostPerToken, CacheReadPricePerToken: p.CacheReadInputTokenCost,
-			ImageInputPricePerToken: p.InputCostPerImageToken, ImageCacheReadPricePerToken: p.CacheReadInputImageTokenCost,
-			ImageOutputPricePerToken: p.OutputCostPerImageToken,
+			InputPricePerToken: 5e-6, CacheReadPricePerToken: 1.25e-6,
+			ImageInputPricePerToken: 8e-6, ImageCacheReadPricePerToken: 2e-6,
+			ImageOutputPricePerToken: 3e-5,
 		}
 	}
 	if modelLower == "jev-latest" {
@@ -1554,53 +1552,65 @@ func (s *BillingService) CacheStoragePricePerTokenHour(model string) float64 {
 	return builtinGeminiCacheStoragePrice(model)
 }
 
+// GetGroupCatalogModelPricing 返回指定分组在模型定价管理中单独配置的价格（自定义编辑或切换缓存供应商）。
+// 若该分组未单独设置该模型价格，返回 (nil, false)，由调用方回退到默认价格。
+func (s *BillingService) GetGroupCatalogModelPricing(groupID int64, model string) (*ModelPricing, bool) {
+	if s == nil || s.pricingService == nil || groupID <= 0 {
+		return nil, false
+	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return nil, false
+	}
+	catalogPricing, ok := s.pricingService.GetModelPricingForGroup(groupID, model)
+	if !ok || catalogPricing == nil || catalogPricing.TokenPricingAbsent {
+		return nil, false
+	}
+	return s.catalogPricingToModelPricing(model, catalogPricing, timezone.Now()), true
+}
+
+func (s *BillingService) catalogPricingToModelPricing(model string, catalogPricing *CatalogModelPricing, pricingAt time.Time) *ModelPricing {
+	price5m := catalogPricing.CacheCreationInputTokenCost
+	price1h := catalogPricing.CacheCreationInputTokenCostAbove1hr
+	enableBreakdown := price1h > 0 && price1h > price5m
+	return s.applyModelSpecificPricingPolicyEx(model, &ModelPricing{
+		priceOverrides:                     catalogPricing.priceOverrides,
+		InputPricePerToken:                 catalogPricing.InputCostPerToken,
+		InputPricePerTokenPriority:         catalogPricing.InputCostPerTokenPriority,
+		OutputPricePerToken:                catalogPricing.OutputCostPerToken,
+		OutputPricePerTokenPriority:        catalogPricing.OutputCostPerTokenPriority,
+		CacheCreationPriceExplicit:         (openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model) || openai.GPT62ModelID(model) != "") && catalogPricing.CacheCreationInputTokenCostExplicit,
+		CacheCreationPricePerToken:         catalogPricing.CacheCreationInputTokenCost,
+		CacheCreationPricePerTokenPriority: catalogPricing.CacheCreationInputTokenCostPriority,
+		CacheReadPricePerToken:             catalogPricing.CacheReadInputTokenCost,
+		CacheReadPricePerTokenPriority:     catalogPricing.CacheReadInputTokenCostPriority,
+		CacheCreation5mPrice:               price5m,
+		CacheCreation1hPrice:               price1h,
+		SupportsCacheBreakdown:             enableBreakdown,
+		LongContextInputThreshold:          catalogPricing.LongContextInputTokenThreshold,
+		LongContextThresholdInclusive:      strings.EqualFold(catalogPricing.Provider, "xai"),
+		LongContextInputMultiplier:         catalogPricing.LongContextInputCostMultiplier,
+		LongContextOutputMultiplier:        catalogPricing.LongContextOutputCostMultiplier,
+		ImageInputPricePerToken:            catalogPricing.InputCostPerImageToken,
+		ImageCacheReadPricePerToken:        catalogPricing.CacheReadInputImageTokenCost,
+		ImageOutputPricePerToken:           catalogPricing.OutputCostPerImageToken,
+	}, true, pricingAt)
+}
+
 // getModelPricingAt 保留带计费时点的内部调用接口。DeepSeek 默认低谷价
 // 仅由模型决定，峰谷倍率由统一计费入口按请求时点处理。
 func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*ModelPricing, error) {
 	// 标准化模型名称（转小写）
 	model = strings.ToLower(model)
 
-	// 1. 优先从动态价格服务获取
+	// 1. 优先从动态价格服务（models.dev 缓存 + 全局默认覆盖）获取
 	if s.pricingService != nil {
-		litellmPricing := s.pricingService.GetModelPricing(model)
-		// 仅有图片价、无 token 价的条目（如 LiteLLM 的 imagen 类模型）不能用于
-		// token 计费：直接返回会把 token 流量按 $0 计费。跳过后走 fallback，
-		// 无 fallback 则 fail-closed（ErrModelPricingUnavailable）。
-		// 图片计费路径（getDefaultImagePrice / getImageUnitPrice）直接读
-		// PricingService，不受影响。
-		if litellmPricing != nil && litellmPricing.TokenPricingAbsent {
-			litellmPricing = nil
+		catalogPricing := s.pricingService.GetModelPricing(model)
+		if catalogPricing != nil && catalogPricing.TokenPricingAbsent {
+			catalogPricing = nil
 		}
-		if litellmPricing != nil {
-			// 启用 5m/1h 分类计费的条件：
-			// 1. 存在 1h 价格
-			// 2. 1h 价格 > 5m 价格（防止 LiteLLM 数据错误导致少收费）
-			price5m := litellmPricing.CacheCreationInputTokenCost
-			price1h := litellmPricing.CacheCreationInputTokenCostAbove1hr
-			enableBreakdown := price1h > 0 && price1h > price5m
-			return s.applyModelSpecificPricingPolicyEx(model, &ModelPricing{
-				priceOverrides:                     litellmPricing.priceOverrides,
-				InputPricePerToken:                 litellmPricing.InputCostPerToken,
-				InputPricePerTokenPriority:         litellmPricing.InputCostPerTokenPriority,
-				OutputPricePerToken:                litellmPricing.OutputCostPerToken,
-				OutputPricePerTokenPriority:        litellmPricing.OutputCostPerTokenPriority,
-				CacheCreationPriceExplicit:         (openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model) || openai.GPT62ModelID(model) != "") && litellmPricing.CacheCreationInputTokenCostExplicit,
-				CacheCreationPricePerToken:         litellmPricing.CacheCreationInputTokenCost,
-				CacheCreationPricePerTokenPriority: litellmPricing.CacheCreationInputTokenCostPriority,
-				CacheReadPricePerToken:             litellmPricing.CacheReadInputTokenCost,
-				CacheReadPricePerTokenPriority:     litellmPricing.CacheReadInputTokenCostPriority,
-				CacheCreation5mPrice:               price5m,
-				CacheCreation1hPrice:               price1h,
-				SupportsCacheBreakdown:             enableBreakdown,
-				LongContextInputThreshold:          litellmPricing.LongContextInputTokenThreshold,
-				// xAI 的长上下文阈值语义为"达到即进高档"（LiteLLM 同口径），其余提供商为严格大于。
-				LongContextThresholdInclusive: strings.EqualFold(litellmPricing.LiteLLMProvider, "xai"),
-				LongContextInputMultiplier:    litellmPricing.LongContextInputCostMultiplier,
-				LongContextOutputMultiplier:   litellmPricing.LongContextOutputCostMultiplier,
-				ImageInputPricePerToken:       litellmPricing.InputCostPerImageToken,
-				ImageCacheReadPricePerToken:   litellmPricing.CacheReadInputImageTokenCost,
-				ImageOutputPricePerToken:      litellmPricing.OutputCostPerImageToken,
-			}, true, pricingAt), nil
+		if catalogPricing != nil {
+			return s.catalogPricingToModelPricing(model, catalogPricing, pricingAt), nil
 		}
 	}
 
@@ -1796,15 +1806,15 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 		pricingAt = timezone.Now()
 	}
 
-	// 默认价卡（Source=LiteLLM）应用 DeepSeek 官方价强制覆盖（幂等，GetModelPricing
+	// 默认价卡（Source=models_dev）应用 DeepSeek 官方价强制覆盖（幂等，GetModelPricing
 	// 内部已强制过）；分组/渠道自定义定价保留运营者配置，不强制覆盖官方价。
-	pricing = s.applyModelSpecificPricingPolicyEx(input.Model, pricing, resolved.Source == PricingSourceLiteLLM, pricingAt)
+	pricing = s.applyModelSpecificPricingPolicyEx(input.Model, pricing, resolved.Source == PricingSourceModelsDev, pricingAt)
 
 	// DeepSeek 模型默认价卡按官方峰谷口径调整：高峰时段（01:00–04:00 与
 	// 06:00–10:00 UTC，仅工作日；北京时间周末全天低谷）按 2× 低谷价计费。
-	// 仅作用于默认价卡（Source=LiteLLM，无分组/渠道自定义定价）——分组/渠道
-	// 自定义定价及 override_file 显式覆盖的字段不叠加。先克隆再乘，避免污染共享价卡。
-	if resolved.Source == PricingSourceLiteLLM && isDeepSeekModel(input.Model) {
+	// 仅作用于默认价卡（Source=models_dev，无分组/渠道自定义定价）——分组/渠道
+	// 自定义定价及模型定价页显式覆盖的字段不叠加。先克隆再乘，避免污染共享价卡。
+	if resolved.Source == PricingSourceModelsDev && isDeepSeekModel(input.Model) {
 		if mult := deepseekPeakMultiplierAt(pricingAt); mult > 1 {
 			cloned := *pricing
 			if !cloned.priceOverrides.input {

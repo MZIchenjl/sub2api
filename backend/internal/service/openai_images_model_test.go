@@ -86,7 +86,7 @@ func TestOpenAIImagesRejectedDriverDoesNotCoolImageModel(t *testing.T) {
 
 func TestGPTImage25And26PricingDoesNotUseLegacyImageRates(t *testing.T) {
 	for _, model := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
-		svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{"gpt-image-2": {InputCostPerToken: 2.5e-6, OutputCostPerImageToken: 15e-6}}}
+		svc := &PricingService{effectiveDefaultData: map[string]*CatalogModelPricing{"gpt-image-2": {InputCostPerToken: 2.5e-6, OutputCostPerImageToken: 15e-6}}}
 		p := svc.GetModelPricing(model)
 		require.NotNil(t, p)
 		require.Equal(t, 5e-6, p.InputCostPerToken)
@@ -94,8 +94,8 @@ func TestGPTImage25And26PricingDoesNotUseLegacyImageRates(t *testing.T) {
 		require.Equal(t, 30e-6, p.OutputCostPerImageToken)
 		require.Equal(t, 1.25e-6, p.CacheReadInputTokenCost)
 		require.Zero(t, p.OutputCostPerToken)
-		custom := &LiteLLMModelPricing{InputCostPerToken: 7e-6}
-		svc.pricingData[model] = custom
+		custom := &CatalogModelPricing{InputCostPerToken: 7e-6}
+		svc.effectiveDefaultData[model] = custom
 		require.Same(t, custom, svc.GetModelPricing(model), "explicit pricing must win")
 	}
 }

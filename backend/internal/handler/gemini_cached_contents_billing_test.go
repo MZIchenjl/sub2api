@@ -10,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -311,19 +309,24 @@ type cachedBillingEnv struct {
 
 func newCachedBillingEnv(t *testing.T, balance float64, accountIDs ...int64) *cachedBillingEnv {
 	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "model_pricing.json"), []byte(fmt.Sprintf(`{"gemini-2.5-pro":{
-		"litellm_provider":"gemini","mode":"chat","input_cost_per_token":%g,"output_cost_per_token":0.00001,
-		"cache_storage_cost_per_token_per_hour":%g},"gemini-alias":{
-		"litellm_provider":"gemini","mode":"chat","input_cost_per_token":%g,"output_cost_per_token":0.00001,
-		"cache_storage_cost_per_token_per_hour":%g}}`,
-		cachedBillingInputPrice, cachedBillingStoragePrice, cachedBillingInputPrice, cachedBillingAliasStoragePrice)), 0o644))
 	cfg := &config.Config{}
-	cfg.Pricing.DataDir = dir
-	cfg.Pricing.UpdateIntervalHours = 100000
+	cfg.Pricing.DataDir = t.TempDir()
+	cfg.Pricing.AutoSyncEnabled = false
+	cfg.Pricing.SyncIntervalHours = 24
 	cfg.Default.RateMultiplier = 1
 	pricing := service.NewPricingService(cfg, nil)
 	require.NoError(t, pricing.Initialize())
+	t.Cleanup(pricing.Stop)
+	require.NoError(t, pricing.UpsertCustomPricing(context.Background(), nil, "gemini-2.5-pro", service.TokenPricingPerMillion{
+		InputPerMillion:               cachedBillingInputPrice * 1_000_000,
+		OutputPerMillion:              10,
+		CacheStoragePerMillionPerHour: cachedBillingStoragePrice * 1_000_000,
+	}))
+	require.NoError(t, pricing.UpsertCustomPricing(context.Background(), nil, "gemini-alias", service.TokenPricingPerMillion{
+		InputPerMillion:               cachedBillingInputPrice * 1_000_000,
+		OutputPerMillion:              10,
+		CacheStoragePerMillionPerHour: cachedBillingAliasStoragePrice * 1_000_000,
+	}))
 	billing := service.NewBillingService(cfg, pricing)
 
 	groupID := int64(42)

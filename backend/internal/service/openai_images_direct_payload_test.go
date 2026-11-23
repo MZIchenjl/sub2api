@@ -3,16 +3,15 @@ package service
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"os"
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -53,19 +52,15 @@ func TestCodexDirectImagesMultipartEdit(t *testing.T) {
 }
 
 func TestCodexDirectImagesPricingAndUsage(t *testing.T) {
-	prices := &PricingService{pricingData: map[string]*LiteLLMModelPricing{"gpt-image-2": {InputCostPerToken: 1}}}
-	for _, model := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
-		price := prices.matchOpenAIModel(model)
-		require.Equal(t, 5e-6, price.InputCostPerToken)
-		require.Equal(t, 8e-6, price.InputCostPerImageToken)
-		require.Equal(t, 30e-6, price.OutputCostPerImageToken)
-		require.Equal(t, 2e-6, price.CacheReadInputImageTokenCost)
+	billing := NewBillingService(&config.Config{}, nil)
+	for _, model := range []string{"gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
+		price, err := billing.GetModelPricing(model)
+		require.NoError(t, err)
+		require.Equal(t, 5e-6, price.InputPricePerToken)
+		require.Equal(t, 8e-6, price.ImageInputPricePerToken)
+		require.Equal(t, 30e-6, price.ImageOutputPricePerToken)
+		require.Equal(t, 2e-6, price.ImageCacheReadPricePerToken)
 	}
-	body, err := os.ReadFile("../../resources/model-pricing/model_prices_and_context_window.json")
-	require.NoError(t, err)
-	var catalog map[string]LiteLLMModelPricing
-	require.NoError(t, json.Unmarshal(body, &catalog))
-	require.Equal(t, 2e-6, catalog["gpt-image-2.5-flare"].CacheReadInputImageTokenCost)
 	usage, ok := codexDirectImagesUsage([]byte(`{"usage":{"input_tokens":100,"input_tokens_details":{"text_tokens":20,"image_tokens":80,"cached_tokens":50,"cached_tokens_details":{"text_tokens":10,"image_tokens":40}},"output_tokens":200}}`))
 	require.True(t, ok)
 	require.Equal(t, 40, usage.ImageCacheReadTokens)

@@ -30,7 +30,7 @@ func newTokenCostTestEnv(t *testing.T, groupPlatform string, pricing []ChannelMo
 
 // geminiCatalogStub 无阶梯字段的 gemini 目录条目（用于验证"无数据即无阶梯"）。
 func geminiCatalogStub() *PricingService {
-	return newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+	return newStubPricingServiceFromMap(map[string]*CatalogModelPricing{
 		"gemini-2.5-pro": {
 			Mode:                    "chat",
 			InputCostPerToken:       1.25e-6,
@@ -114,7 +114,7 @@ func TestCalculateTokenCostForRequest_CatalogLadderFollowsGroupToggle(t *testing
 		group := &Group{ID: 100, Platform: PlatformGemini, LongContextPricingEnabled: enabled}
 		gid := group.ID
 		resolved := resolver.Resolve(context.Background(), PricingInput{Model: "gemini-2.5-pro", GroupID: &gid, Group: group})
-		require.Equal(t, PricingSourceLiteLLM, resolved.Source)
+		require.Equal(t, PricingSourceModelsDev, resolved.Source)
 
 		got, err := bs.CalculateTokenCostForRequest(TokenCostRequest{
 			Ctx: context.Background(), Model: "gemini-2.5-pro", Group: group, Tokens: tokens, RateMultiplier: 1,
@@ -139,7 +139,7 @@ func TestCalculateTokenCostForRequest_GeminiLadderAppliesToCacheItems(t *testing
 	group := &Group{ID: 100, Platform: PlatformGemini, LongContextPricingEnabled: true}
 	gid := group.ID
 	resolved := resolver.Resolve(context.Background(), PricingInput{Model: "gemini-2.5-pro", GroupID: &gid, Group: group})
-	require.Equal(t, PricingSourceLiteLLM, resolved.Source)
+	require.Equal(t, PricingSourceModelsDev, resolved.Source)
 
 	calc := func(tokens UsageTokens) *CostBreakdown {
 		got, err := bs.CalculateTokenCostForRequest(TokenCostRequest{

@@ -26,12 +26,12 @@ var (
 		PlatformCommandCode,
 		PlatformCline,
 	}
-	legacyCNProviders    = []string{PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax}
-	legacyLiteLLMByPlatf = map[string]string{
-		PlatformAnthropic: "anthropic", PlatformOpenAI: "openai", PlatformGemini: "gemini",
-		PlatformAntigravity: "anthropic", PlatformGrok: "xai", PlatformKimi: "moonshot",
-		PlatformZhipu: "zhipu", PlatformDeepseek: "deepseek", PlatformMiniMax: "minimax",
-		PlatformOpenCodeGo: "opencode-go", PlatformTypeSafe: "typesafe", PlatformCommandCode: "", PlatformCline: "",
+	legacyCNProviders       = []string{PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax}
+	modelsDevByPlatform     = map[string]string{
+		PlatformAnthropic: "anthropic", PlatformOpenAI: "openai", PlatformGemini: "google",
+		PlatformAntigravity: "anthropic", PlatformGrok: "xai", PlatformKimi: "moonshotai",
+		PlatformZhipu: "zhipuai", PlatformDeepseek: "deepseek", PlatformMiniMax: "minimax",
+		PlatformOpenCodeGo: "opencode-go", PlatformTypeSafe: "typesafe", PlatformCommandCode: "commandcode", PlatformCline: "cline-pass",
 	}
 )
 
@@ -42,10 +42,10 @@ func TestPlatformListMatchesLegacyLists(t *testing.T) {
 		return spec.Gateway == PlatformGatewayOpenAI
 	}))
 	require.Equal(t, legacyCNProviders, PlatformIDsWhere(func(spec PlatformSpec) bool { return spec.CNProvider }))
-	for platform, provider := range legacyLiteLLMByPlatf {
+	for platform, provider := range modelsDevByPlatform {
 		spec, ok := LookupPlatform(platform)
 		require.True(t, ok, platform)
-		require.Equal(t, provider, spec.LiteLLMProvider, platform)
+		require.Equal(t, provider, spec.ModelsDevProvider, platform)
 	}
 }
 

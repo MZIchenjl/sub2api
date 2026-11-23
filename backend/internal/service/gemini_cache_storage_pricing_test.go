@@ -61,15 +61,19 @@ func TestBuiltinGeminiCacheStoragePrice(t *testing.T) {
 }
 
 func TestCacheStoragePricePerTokenHourPriority(t *testing.T) {
-	pricing := &PricingService{}
-	data, err := pricing.parsePricingData([]byte(`{
-		"gemini-3.8-flash":{"litellm_provider":"gemini","input_cost_per_token":0.00000075,"output_cost_per_token":0.00000375,
-			"cache_storage_cost_per_token_per_hour":0.000002},
-		"gemini-3.9-flash":{"litellm_provider":"gemini","input_cost_per_token":0.0000015,"output_cost_per_token":0.0000075,
-			"cache_storage_cost_per_token_per_hour":0.0000007},
-		"gemini-2.5-pro":{"litellm_provider":"gemini","input_cost_per_token":0.00000125,"output_cost_per_token":0.00001}}`))
-	require.NoError(t, err)
-	pricing.pricingData = data
+	pricing := newStubPricingServiceFromCatalogMap(map[string]*CatalogModelPricing{
+		"gemini-3.8-flash": {
+			Provider: "google", InputCostPerToken: 0.00000075, OutputCostPerToken: 0.00000375,
+			CacheStorageCostPerTokenPerHour: 0.000002,
+		},
+		"gemini-3.9-flash": {
+			Provider: "google", InputCostPerToken: 0.0000015, OutputCostPerToken: 0.0000075,
+			CacheStorageCostPerTokenPerHour: 0.0000007,
+		},
+		"gemini-2.5-pro": {
+			Provider: "google", InputCostPerToken: 0.00000125, OutputCostPerToken: 0.00001,
+		},
+	})
 	billing := NewBillingService(&config.Config{}, pricing)
 
 	require.InDelta(t, 2e-6, billing.CacheStoragePricePerTokenHour("gemini-3.8-flash"), 1e-15, "价格表配置值优先于内置型号价")

@@ -1788,7 +1788,7 @@ func TestCalculateCostWithServiceTier_PriorityFallsBackToTierMultiplierWithoutEx
 
 func TestBillingServiceGetModelPricing_UsesDynamicPriorityFields(t *testing.T) {
 	pricingSvc := &PricingService{
-		pricingData: map[string]*LiteLLMModelPricing{
+		effectiveDefaultData: map[string]*CatalogModelPricing{
 			"gpt-5.4": {
 				InputCostPerToken:               2.5e-6,
 				InputCostPerTokenPriority:       5e-6,
@@ -1837,7 +1837,7 @@ func TestBillingServiceGetModelPricing_OpenAIFallbackGpt52Variants(t *testing.T)
 
 func TestCalculateCostWithServiceTier_PriorityFallsBackToTierMultiplierWhenExplicitPriceMissing(t *testing.T) {
 	svc := NewBillingService(&config.Config{}, &PricingService{
-		pricingData: map[string]*LiteLLMModelPricing{
+		effectiveDefaultData: map[string]*CatalogModelPricing{
 			"custom-no-priority": {
 				InputCostPerToken:           1e-6,
 				OutputCostPerToken:          2e-6,
@@ -1881,7 +1881,7 @@ func TestGetModelPricing_OpenAIGpt52FallbacksExposePriorityPrices(t *testing.T) 
 
 func TestGetModelPricing_MapsDynamicPriorityFieldsIntoBillingPricing(t *testing.T) {
 	svc := NewBillingService(&config.Config{}, &PricingService{
-		pricingData: map[string]*LiteLLMModelPricing{
+		effectiveDefaultData: map[string]*CatalogModelPricing{
 			"dynamic-tier-model": {
 				InputCostPerToken:                   1e-6,
 				InputCostPerTokenPriority:           2e-6,
@@ -2084,7 +2084,7 @@ func TestGetModelPricingWithChannel_UnknownModelReturnsError(t *testing.T) {
 }
 
 func TestGetModelPricingWithChannel_NilImagePricesInheritCatalog(t *testing.T) {
-	svc := NewBillingService(&config.Config{}, newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+	svc := NewBillingService(&config.Config{}, newStubPricingServiceFromMap(map[string]*CatalogModelPricing{
 		"gpt-image-2": {
 			Mode:                    "image_generation",
 			InputCostPerToken:       5e-6,
@@ -2109,7 +2109,7 @@ func TestGetModelPricingWithChannel_NilImagePricesInheritCatalog(t *testing.T) {
 }
 
 func TestGetModelPricingWithChannel_ExplicitImagePricesOverrideCatalog(t *testing.T) {
-	svc := NewBillingService(&config.Config{}, newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+	svc := NewBillingService(&config.Config{}, newStubPricingServiceFromMap(map[string]*CatalogModelPricing{
 		"gpt-image-2": {
 			Mode:                    "image_generation",
 			InputCostPerToken:       5e-6,
@@ -2173,14 +2173,29 @@ func TestComputeTokenBreakdown_NonExplicitZeroImagePrice_FallsBackToOutput(t *te
 }
 
 func TestNewModelPricingCatalogFallbackAndContext(t *testing.T) {
-	data, err := os.ReadFile("../../resources/model-pricing/model_prices_and_context_window.json")
-	require.NoError(t, err)
-	catalog := &PricingService{}
-	catalog.pricingData, err = catalog.parsePricingData(data)
-	require.NoError(t, err)
+	catalog := newStubPricingServiceFromJSON(t, `{
+		"openai": {"id": "openai", "name": "OpenAI", "models": {
+			"gpt-6.1-sol": {"id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "cost": {"input": 2, "output": 10, "cache_write": 2.5, "cache_read": 0.1, "tiers": [{"input": 4, "output": 15, "tier": {"type": "context", "size": 272000}}]}},
+			"gpt-6.1-terra": {"id": "gpt-6.1-terra", "name": "GPT-6.1 Terra", "cost": {"input": 1, "output": 5, "cache_write": 1.25, "cache_read": 0.05, "tiers": [{"input": 2, "output": 7.5, "tier": {"type": "context", "size": 272000}}]}},
+			"gpt-6-sol": {"id": "gpt-6-sol", "name": "GPT-6 Sol", "cost": {"input": 2, "output": 10, "cache_write": 2.5, "cache_read": 0.2, "tiers": [{"input": 4, "output": 15, "tier": {"type": "context", "size": 272000}}]}},
+			"gpt-6-luna": {"id": "gpt-6-luna", "name": "GPT-6 Luna", "cost": {"input": 0.1, "output": 0.5, "cache_write": 0.125, "cache_read": 0.01, "tiers": [{"input": 0.2, "output": 0.75, "tier": {"type": "context", "size": 272000}}]}}
+		}},
+		"anthropic": {"id": "anthropic", "name": "Anthropic", "models": {
+			"claude-haiku-5-5": {"id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "cost": {"input": 0.1, "output": 0.5, "cache_write": 0.125, "cache_read": 0.01, "tiers": [{"input": 0.5, "output": 2.5, "tier": {"type": "context", "size": 100000}}]}}
+		}}
+	}`)
+	// Add 1h cache breakdown entries for Opus/Sonnet 5.5
+	catalog.effectiveDefaultData["claude-opus-5-5"] = &CatalogModelPricing{
+		Provider: "anthropic", InputCostPerToken: 4e-6, OutputCostPerToken: 20e-6,
+		CacheCreationInputTokenCost: 5e-6, CacheCreationInputTokenCostAbove1hr: 8e-6, CacheReadInputTokenCost: 0.2e-6,
+	}
+	catalog.effectiveDefaultData["claude-sonnet-5-5"] = &CatalogModelPricing{
+		Provider: "anthropic", InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6,
+		CacheCreationInputTokenCost: 2.5e-6, CacheCreationInputTokenCostAbove1hr: 4e-6, CacheReadInputTokenCost: 0.1e-6,
+	}
 	sources := map[string]*BillingService{
 		"billing fallback": newTestBillingService(),
-		"pricing fallback": NewBillingService(&config.Config{}, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"pricing fallback": NewBillingService(&config.Config{}, &PricingService{effectiveDefaultData: map[string]*CatalogModelPricing{
 			"gpt-6":         {InputCostPerToken: 10e-6, OutputCostPerToken: 50e-6},
 			"claude-opus-5": {InputCostPerToken: 5e-6, OutputCostPerToken: 25e-6},
 		}}),
@@ -2308,10 +2323,7 @@ func TestNewModelPricingChannelOverridesAndFamilyIsolation(t *testing.T) {
 }
 
 func TestNewModelPricingExplicitZeroCacheWrite(t *testing.T) {
-	svc := &PricingService{}
-	var err error
-	svc.pricingData, err = svc.parsePricingData([]byte(`{"gpt-6-sol":{"litellm_provider":"openai","input_cost_per_token":0.000002,"output_cost_per_token":0.00001,"input_cost_per_token_flex":0.000001,"cache_creation_input_token_cost":0}}`))
-	require.NoError(t, err)
+	svc := newStubPricingServiceFromJSON(t, `{"openai":{"id":"openai","name":"OpenAI","models":{"gpt-6-sol":{"id":"gpt-6-sol","name":"GPT-6 Sol","cost":{"input":2,"output":10,"cache_write":0}}}}}`)
 	billing := NewBillingService(&config.Config{}, svc)
 	for _, tier := range []string{"", "priority", "flex"} {
 		cost, err := billing.CalculateCostWithServiceTier("gpt-6-sol", UsageTokens{CacheCreationTokens: 1000}, 1, tier)
@@ -2321,8 +2333,8 @@ func TestNewModelPricingExplicitZeroCacheWrite(t *testing.T) {
 }
 
 func TestNewModelPricingAliasesRetainExplicitOverrides(t *testing.T) {
-	zero := &LiteLLMModelPricing{}
-	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+	zero := &CatalogModelPricing{}
+	svc := &PricingService{effectiveDefaultData: map[string]*CatalogModelPricing{
 		"gpt-6.1-sol": zero, "gpt-6-sol": zero, "gpt-6-luna": zero, "claude-opus-5-5": zero,
 	}}
 	for _, model := range []string{"gpt-6.1-sol-max", "gpt-6-sol-max", "openai/gpt-6-luna-openai-compact", "claude-opus-5-5-thinking"} {
@@ -2331,11 +2343,14 @@ func TestNewModelPricingAliasesRetainExplicitOverrides(t *testing.T) {
 }
 
 func TestAstraUltrafastPricingUsesSixTimesStandard(t *testing.T) {
-	data, err := os.ReadFile("../../resources/model-pricing/model_prices_and_context_window.json")
-	require.NoError(t, err)
-	catalog := &PricingService{}
-	catalog.pricingData, err = catalog.parsePricingData(data)
-	require.NoError(t, err)
+	catalog := newStubPricingServiceFromJSON(t, `{
+		"openai": {"id": "openai", "name": "OpenAI", "models": {
+			"gpt-6-astra": {"id": "gpt-6-astra", "name": "GPT-6 Astra", "cost": {
+				"input": 10, "output": 50, "cache_read": 1, "cache_write": 12.5,
+				"tiers": [{"input": 20, "output": 75, "tier": {"type": "context", "size": 272000}}]
+			}}
+		}}
+	}`)
 	for _, svc := range []*BillingService{newTestBillingService(), NewBillingService(&config.Config{}, &PricingService{}), NewBillingService(&config.Config{}, catalog)} {
 		for _, model := range []string{"gpt-6-astra", "gpt-6", "openai/gpt-6-astra"} {
 			for _, n := range []int{271999, 272000, 272001} {
@@ -2398,10 +2413,13 @@ func TestOpenAIUltrafastGateMatchesBilling(t *testing.T) {
 }
 
 func TestGPT61SolExplicitZeroCacheWriteAcrossTiers(t *testing.T) {
-	pricing := &PricingService{}
-	var err error
-	pricing.pricingData, err = pricing.parsePricingData([]byte(`{"gpt-6.1-sol":{"litellm_provider":"openai","input_cost_per_token":0.000002,"output_cost_per_token":0.00001,"input_cost_per_token_flex":0.000001,"cache_creation_input_token_cost":0,"cache_creation_input_token_cost_priority":0.000005}}`))
-	require.NoError(t, err)
+	pricing := newStubPricingServiceFromCatalogMap(map[string]*CatalogModelPricing{
+		"gpt-6.1-sol": {
+			Provider: "openai", InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6,
+			CacheCreationInputTokenCost: 0, CacheCreationInputTokenCostExplicit: true,
+			CacheCreationInputTokenCostPriority: 5e-6,
+		},
+	})
 	svc := NewBillingService(&config.Config{}, pricing)
 	for _, tier := range []string{"", "fast", "priority", "flex"} {
 		cost, err := svc.CalculateCostWithServiceTier("openai/gpt-6.1-sol-max", UsageTokens{CacheCreationTokens: 300000}, 1, tier)

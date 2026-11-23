@@ -117,6 +117,9 @@ func RegisterAdminRoutes(
 		// 渠道管理
 		registerChannelRoutes(admin, h)
 
+		// 模型定价管理（models.dev 同步与分组定价覆盖）
+		registerModelPricingRoutes(admin, h)
+
 		// 渠道监控
 		registerChannelMonitorRoutes(admin, h, settingService)
 		registerChannelMonitorV2Routes(admin, h, settingService)
@@ -795,6 +798,22 @@ func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		channels.POST("", h.Admin.Channel.Create)
 		channels.PUT("/:id", h.Admin.Channel.Update)
 		channels.DELETE("/:id", h.Admin.Channel.Delete)
+	}
+}
+
+func registerModelPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if h.Admin.ModelPricing == nil {
+		return
+	}
+	pricing := admin.Group("/model-pricing")
+	{
+		pricing.GET("/status", h.Admin.ModelPricing.GetStatus)
+		pricing.PUT("/sync-config", h.Admin.ModelPricing.UpdateSyncConfig)
+		pricing.POST("/sync", h.Admin.ModelPricing.SyncNow)
+		pricing.GET("/models", h.Admin.ModelPricing.ListModels)
+		pricing.PUT("/select-provider", h.Admin.ModelPricing.SelectProvider)
+		pricing.PUT("/override", h.Admin.ModelPricing.UpsertOverride)
+		pricing.DELETE("/override", h.Admin.ModelPricing.ResetOverride)
 	}
 }
 

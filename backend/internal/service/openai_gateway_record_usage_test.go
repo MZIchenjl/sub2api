@@ -1181,7 +1181,7 @@ func TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndSt
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
-	svc.billingService = NewBillingService(svc.cfg, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+	svc.billingService = NewBillingService(svc.cfg, &PricingService{effectiveDefaultData: map[string]*CatalogModelPricing{
 		"gpt-5.6-sol": {
 			InputCostPerToken:       5e-6,
 			OutputCostPerToken:      30e-6,
