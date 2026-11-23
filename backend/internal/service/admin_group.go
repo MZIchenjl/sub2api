@@ -375,6 +375,21 @@ func sanitizeGroupOpenAIFast(group *Group) {
 	}
 }
 
+func groupSupportsDeepSeekWebSearch(platform string) bool {
+	return platform == PlatformDeepseek || platform == PlatformComposite || platform == PlatformOpenAI
+}
+
+func sanitizeGroupDeepSeekWebSearch(group *Group) {
+	if group == nil {
+		return
+	}
+	if !groupSupportsDeepSeekWebSearch(group.Platform) {
+		group.DeepSeekWebSearchMode = ""
+		return
+	}
+	group.DeepSeekWebSearchMode = NormalizeDeepSeekWebSearchMode(group.DeepSeekWebSearchMode)
+}
+
 func normalizeCreateGroupInputForSimpleMode(input *CreateGroupInput) {
 	if input == nil {
 		return
@@ -629,6 +644,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
 		ForceOpenAIUltrafast:            input.ForceOpenAIUltrafast,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
+		DeepSeekWebSearchMode:           input.DeepSeekWebSearchMode,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
 		RequirePrivacySet:               input.RequirePrivacySet,
 		DefaultMappedModel:              input.DefaultMappedModel,
@@ -644,6 +660,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	sanitizeGroupDeepSeekWebSearch(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
@@ -1027,6 +1044,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.FreeOpenAIFast != nil {
 		group.FreeOpenAIFast = *input.FreeOpenAIFast
 	}
+	if input.DeepSeekWebSearchMode != nil {
+		group.DeepSeekWebSearchMode = *input.DeepSeekWebSearchMode
+	}
 	if input.RequireOAuthOnly != nil {
 		group.RequireOAuthOnly = *input.RequireOAuthOnly
 	}
@@ -1075,6 +1095,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	sanitizeGroupDeepSeekWebSearch(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}

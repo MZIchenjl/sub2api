@@ -945,6 +945,14 @@ export default {
         webSearchEnabled: '开启',
         webSearchDisabled: '关闭',
       },
+      deepseek: {
+        webSearch: 'DeepSeek 官方联网搜索',
+        webSearchDesc:
+          '控制该账号是否启用 DeepSeek 官方免费服务端联网搜索（仅对直连 api.deepseek.com 生效，自动跳过第三方搜索模拟、保留多轮搜索上下文并适配协议工具格式）。默认跟随渠道配置。',
+        webSearchDefault: '默认（跟随渠道）',
+        webSearchEnabled: '开启',
+        webSearchDisabled: '关闭',
+      },
       modelRestriction: '模型限制（可选）',
       modelWhitelist: '模型白名单',
       modelMapping: '模型映射',

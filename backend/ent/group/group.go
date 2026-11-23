@@ -128,6 +128,8 @@ const (
 	FieldForceOpenaiUltrafast = "force_openai_ultrafast"
 	// FieldFreeOpenaiFast holds the string denoting the free_openai_fast field in the database.
 	FieldFreeOpenaiFast = "free_openai_fast"
+	// FieldDeepseekWebSearchMode holds the string denoting the deepseek_web_search_mode field in the database.
+	FieldDeepseekWebSearchMode = "deepseek_web_search_mode"
 	// FieldRequireOauthOnly holds the string denoting the require_oauth_only field in the database.
 	FieldRequireOauthOnly = "require_oauth_only"
 	// FieldRequirePrivacySet holds the string denoting the require_privacy_set field in the database.
@@ -285,6 +287,7 @@ var Columns = []string{
 	FieldForceOpenaiFast,
 	FieldForceOpenaiUltrafast,
 	FieldFreeOpenaiFast,
+	FieldDeepseekWebSearchMode,
 	FieldRequireOauthOnly,
 	FieldRequirePrivacySet,
 	FieldDefaultMappedModel,
@@ -417,6 +420,10 @@ var (
 	DefaultForceOpenaiUltrafast bool
 	// DefaultFreeOpenaiFast holds the default value on creation for the "free_openai_fast" field.
 	DefaultFreeOpenaiFast bool
+	// DefaultDeepseekWebSearchMode holds the default value on creation for the "deepseek_web_search_mode" field.
+	DefaultDeepseekWebSearchMode string
+	// DeepseekWebSearchModeValidator is a validator for the "deepseek_web_search_mode" field. It is called by the builders before save.
+	DeepseekWebSearchModeValidator func(string) error
 	// DefaultRequireOauthOnly holds the default value on creation for the "require_oauth_only" field.
 	DefaultRequireOauthOnly bool
 	// DefaultRequirePrivacySet holds the default value on creation for the "require_privacy_set" field.
@@ -712,6 +719,11 @@ func ByForceOpenaiUltrafast(opts ...sql.OrderTermOption) OrderOption {
 // ByFreeOpenaiFast orders the results by the free_openai_fast field.
 func ByFreeOpenaiFast(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFreeOpenaiFast, opts...).ToFunc()
+}
+
+// ByDeepseekWebSearchMode orders the results by the deepseek_web_search_mode field.
+func ByDeepseekWebSearchMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDeepseekWebSearchMode, opts...).ToFunc()
 }
 
 // ByRequireOauthOnly orders the results by the require_oauth_only field.

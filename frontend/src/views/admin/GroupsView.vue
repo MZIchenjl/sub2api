@@ -1454,6 +1454,38 @@
           </div>
         </div>
 
+        <!-- DeepSeek 官方联网搜索覆盖（deepseek / composite / openai 分组） -->
+        <div
+          v-if="groupSupportsDeepSeekWebSearch(createForm.platform)"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <label class="input-label mb-0">{{
+                t("admin.groups.deepseekWebSearch.title")
+              }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.deepseekWebSearch.hint") }}
+              </p>
+            </div>
+            <select
+              v-model="createForm.deepseek_web_search_mode"
+              data-testid="create-deepseek-web-search-mode"
+              class="input w-44 text-sm"
+            >
+              <option value="default">
+                {{ t("admin.groups.deepseekWebSearch.default") }}
+              </option>
+              <option value="enabled">
+                {{ t("admin.groups.deepseekWebSearch.enabled") }}
+              </option>
+              <option value="disabled">
+                {{ t("admin.groups.deepseekWebSearch.disabled") }}
+              </option>
+            </select>
+          </div>
+        </div>
+
         <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
         <div
           v-if="createForm.platform === 'openai'"
@@ -3118,6 +3150,38 @@
             <p class="input-hint">
               {{ t("admin.groups.claudeCode.fallbackHint") }}
             </p>
+          </div>
+        </div>
+
+        <!-- DeepSeek 官方联网搜索覆盖（deepseek / composite / openai 分组） -->
+        <div
+          v-if="groupSupportsDeepSeekWebSearch(editForm.platform)"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <label class="input-label mb-0">{{
+                t("admin.groups.deepseekWebSearch.title")
+              }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.deepseekWebSearch.hint") }}
+              </p>
+            </div>
+            <select
+              v-model="editForm.deepseek_web_search_mode"
+              data-testid="edit-deepseek-web-search-mode"
+              class="input w-44 text-sm"
+            >
+              <option value="default">
+                {{ t("admin.groups.deepseekWebSearch.default") }}
+              </option>
+              <option value="enabled">
+                {{ t("admin.groups.deepseekWebSearch.enabled") }}
+              </option>
+              <option value="disabled">
+                {{ t("admin.groups.deepseekWebSearch.disabled") }}
+              </option>
+            </select>
           </div>
         </div>
 
@@ -4998,6 +5062,22 @@ const submitEditAllowlistCustomEntry = () => {
   }
 };
 
+const groupSupportsDeepSeekWebSearch = (platform: string): boolean =>
+  platform === "deepseek" || platform === "composite" || platform === "openai";
+
+const normalizeGroupDeepSeekWebSearchMode = (
+  platform: string,
+  mode: string,
+): "" | "enabled" | "disabled" => {
+  if (!groupSupportsDeepSeekWebSearch(platform)) {
+    return "";
+  }
+  if (mode === "enabled" || mode === "disabled") {
+    return mode;
+  }
+  return "";
+};
+
 const createForm = reactive({
   name: "",
   description: "",
@@ -5013,6 +5093,7 @@ const createForm = reactive({
   force_openai_fast: false,
   force_openai_ultrafast: false,
   free_openai_fast: false,
+  deepseek_web_search_mode: "default" as "default" | "enabled" | "disabled",
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5381,6 +5462,7 @@ const editForm = reactive({
   force_openai_fast: false,
   force_openai_ultrafast: false,
   free_openai_fast: false,
+  deepseek_web_search_mode: "default" as "default" | "enabled" | "disabled",
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5874,6 +5956,7 @@ const closeCreateModal = () => {
   createForm.force_openai_fast = false;
   createForm.force_openai_ultrafast = false;
   createForm.free_openai_fast = false;
+  createForm.deepseek_web_search_mode = "default";
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
@@ -6006,6 +6089,10 @@ const handleCreateGroup = async () => {
       free_openai_fast: normalizeGroupOpenAIFast(
         createForm.platform,
         createForm.free_openai_fast,
+      ),
+      deepseek_web_search_mode: normalizeGroupDeepSeekWebSearchMode(
+        createForm.platform,
+        createForm.deepseek_web_search_mode,
       ),
       model_pricing: groupPricingToAPI(
         createForm.model_pricing,
@@ -6154,6 +6241,11 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.force_openai_fast = group.force_openai_fast ?? false;
   editForm.force_openai_ultrafast = group.force_openai_ultrafast ?? false;
   editForm.free_openai_fast = group.free_openai_fast ?? false;
+  editForm.deepseek_web_search_mode =
+    group.deepseek_web_search_mode === "enabled" ||
+    group.deepseek_web_search_mode === "disabled"
+      ? group.deepseek_web_search_mode
+      : "default";
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
@@ -6290,6 +6382,7 @@ const closeEditModal = () => {
   editForm.force_openai_fast = false;
   editForm.force_openai_ultrafast = false;
   editForm.free_openai_fast = false;
+  editForm.deepseek_web_search_mode = "default";
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
@@ -6356,6 +6449,10 @@ const handleUpdateGroup = async () => {
       free_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,
         editForm.free_openai_fast,
+      ),
+      deepseek_web_search_mode: normalizeGroupDeepSeekWebSearchMode(
+        editForm.platform,
+        editForm.deepseek_web_search_mode,
       ),
       model_pricing: groupPricingToAPI(
         editForm.model_pricing,

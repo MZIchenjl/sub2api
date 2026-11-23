@@ -131,6 +131,10 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
+	if s.isDeepSeekOfficialWebSearchEnabled(ctx, c, account, targetURL) {
+		wantSearch, wantReadURL := detectInboundDeepSeekWebTools(body)
+		chatBody = injectDeepSeekChatWebTools(chatBody, wantSearch, wantReadURL)
+	}
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
 	if err != nil {
 		return nil, err

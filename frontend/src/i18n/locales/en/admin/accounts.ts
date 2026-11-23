@@ -827,6 +827,14 @@ export default {
         webSearchEnabled: 'Enabled',
         webSearchDisabled: 'Disabled',
       },
+      deepseek: {
+        webSearch: 'DeepSeek Official Web Search',
+        webSearchDesc:
+          'Controls native free server-side web search for this account (applies only when targeting official api.deepseek.com; bypasses third-party emulation, preserves multi-turn search blocks, and adapts protocol tools). Default follows channel config.',
+        webSearchDefault: 'Default (Channel)',
+        webSearchEnabled: 'Enabled',
+        webSearchDisabled: 'Disabled',
+      },
       modelRestriction: 'Model Restriction (Optional)',
       modelWhitelist: 'Model Whitelist',
       modelMapping: 'Model Mapping',

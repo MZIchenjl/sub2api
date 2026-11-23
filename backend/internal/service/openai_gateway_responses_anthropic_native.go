@@ -97,11 +97,6 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 		return nil, fmt.Errorf("marshal anthropic request: %w", err)
 	}
 
-	// 与 /v1/messages 直通路径相同的 pre-filter。
-	anthropicBody = StripEmptyTextBlocks(anthropicBody)
-	anthropicBody = FilterWebSearchHistoryBlocks(anthropicBody, upstreamModel)
-	anthropicBody = enforceCacheControlLimit(anthropicBody)
-
 	apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if apiKey == "" {
 		return nil, fmt.Errorf("account %d missing api_key", account.ID)
@@ -110,6 +105,16 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	if err != nil {
 		return nil, err
 	}
+
+	// 与 /v1/messages 直通路径相同的 pre-filter。
+	anthropicBody = StripEmptyTextBlocks(anthropicBody)
+	if s.isDeepSeekOfficialWebSearchEnabled(ctx, c, account, targetURL) {
+		anthropicBody = FilterEmulatedWebSearchHistoryBlocks(anthropicBody)
+		anthropicBody = adaptDeepSeekAnthropicWebSearchTools(anthropicBody)
+	} else {
+		anthropicBody = FilterWebSearchHistoryBlocks(anthropicBody, upstreamModel)
+	}
+	anthropicBody = enforceCacheControlLimit(anthropicBody)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

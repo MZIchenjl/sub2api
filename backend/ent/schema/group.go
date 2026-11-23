@@ -259,6 +259,10 @@ func (Group) Fields() []ent.Field {
 		field.Bool("free_openai_fast").
 			Default(false).
 			Comment("是否让此 OpenAI/Composite 分组的 Fast 请求按 Standard 价格计费"),
+		field.String("deepseek_web_search_mode").
+			MaxLen(20).
+			Default("").
+			Comment("DeepSeek 官方联网搜索分组级覆盖：空/default 跟随渠道，enabled 强制开启，disabled 强制关闭"),
 		field.Bool("require_oauth_only").
 			Default(false).
 			Comment("仅允许非 apikey 类型账号关联到此分组"),
