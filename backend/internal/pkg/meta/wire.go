@@ -136,9 +136,9 @@ func PrepareResponsesPayload(raw []byte, model string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid JSON request payload")
 	}
 	out := append([]byte(nil), raw...)
-	if strings.TrimSpace(model) != "" {
+	if normalizedModel := NormalizeModelID(model); normalizedModel != "" {
 		var err error
-		out, err = sjson.SetBytes(out, "model", strings.TrimSpace(model))
+		out, err = sjson.SetBytes(out, "model", normalizedModel)
 		if err != nil {
 			return nil, err
 		}

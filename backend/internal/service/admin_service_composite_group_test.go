@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/devin"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/meta"
 	"github.com/stretchr/testify/require"
 )
 
@@ -216,4 +218,20 @@ func TestAdminService_CNProviderModelsListCandidatesKeepClaudeDefaults(t *testin
 	for _, platform := range []string{PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax} {
 		require.Equal(t, want, defaultModelsListCandidateIDs(platform), "platform=%s", platform)
 	}
+}
+
+func TestAdminService_DevinAndMetaModelsListCandidates(t *testing.T) {
+	require.Equal(t, devin.DefaultModelIDs(), defaultModelsListCandidateIDs(PlatformDevin))
+	require.Equal(t, meta.DefaultModelIDs(), defaultModelsListCandidateIDs(PlatformMeta))
+
+	compositeCandidates := defaultModelsListCandidateIDs(PlatformComposite)
+	require.Contains(t, compositeCandidates, "swe-2")
+	require.Contains(t, compositeCandidates, "swe-2-flash")
+	require.Contains(t, compositeCandidates, "muse-ember-1.0")
+	require.Contains(t, compositeCandidates, "muse-spark-1.3")
+	// Cross-vendor Devin catalog IDs (e.g. grok-4-7 / gpt-6-1-sol / glm-5-3) must not leak
+	// into static composite candidates without explicit mapping or composite route rules.
+	require.NotContains(t, compositeCandidates, "grok-4-7")
+	require.NotContains(t, compositeCandidates, "gpt-6-1-sol")
+	require.NotContains(t, compositeCandidates, "glm-5-3")
 }

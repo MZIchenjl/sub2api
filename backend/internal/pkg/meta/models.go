@@ -37,7 +37,19 @@ func DefaultModelIDs() []string {
 	return out
 }
 
+// NormalizeModelID strips optional composite provider prefixes (meta/, metamuse/, meta-muse/).
+func NormalizeModelID(model string) string {
+	trimmed := strings.TrimSpace(model)
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"meta/", "metamuse/", "meta-muse/"} {
+		if strings.HasPrefix(lower, prefix) {
+			return strings.TrimSpace(trimmed[len(prefix):])
+		}
+	}
+	return trimmed
+}
+
 // IsContributorModel reports whether model requests Muse contributor mode.
 func IsContributorModel(model string) bool {
-	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(model)), "-contributor")
+	return strings.HasSuffix(strings.ToLower(NormalizeModelID(model)), "-contributor")
 }

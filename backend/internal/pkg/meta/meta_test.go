@@ -134,4 +134,18 @@ func TestHeadersAndRateLimitParsing(t *testing.T) {
 	if !IsSubscriptionUsageEvent("response.subscription_usage", nil) {
 		t.Fatalf("expected subscription_usage detection")
 	}
+
+	if got := NormalizeModelID("meta/muse-spark-1.3-contributor"); got != "muse-spark-1.3-contributor" {
+		t.Fatalf("unexpected normalized model: %s", got)
+	}
+	if !IsContributorModel("metamuse/muse-spark-1.3-contributor") {
+		t.Fatalf("expected prefixed contributor model to be detected")
+	}
+	preparedPrefixed, err := PrepareResponsesPayload([]byte(`{"model":"old","input":"hi"}`), "meta-muse/muse-ember-1.0")
+	if err != nil {
+		t.Fatalf("PrepareResponsesPayload prefixed failed: %v", err)
+	}
+	if got := gjson.GetBytes(preparedPrefixed, "model").String(); got != "muse-ember-1.0" {
+		t.Fatalf("expected provider prefix stripped, got %s", got)
+	}
 }
