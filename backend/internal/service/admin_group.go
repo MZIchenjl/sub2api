@@ -13,9 +13,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/devin"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/meta"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
@@ -300,6 +302,10 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return DefaultOpenCodeGoModelIDs()
 	case PlatformTypeSafe:
 		return []string{typesafe.JevLatestModel}
+	case PlatformDevin:
+		return devin.DefaultModelIDs()
+	case PlatformMeta:
+		return meta.DefaultModelIDs()
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:
@@ -335,6 +341,14 @@ func compositeDefaultModelsListCandidateIDs() []string {
 			continue
 		}
 		for _, id := range defaultModelsListCandidateIDs(platform) {
+			// Devin proxies cross-vendor model IDs (claude-*/gpt-*/gemini-*) that route to
+			// their native platforms in composite groups unless mapped explicitly. Only
+			// include Devin-exclusive models in static composite candidates.
+			if platform == PlatformDevin {
+				if detected, ok := DetectModelPlatform(id); !ok || detected != PlatformDevin {
+					continue
+				}
+			}
 			if _, ok := seen[id]; ok {
 				continue
 			}

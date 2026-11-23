@@ -116,6 +116,8 @@ export default {
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
+        devin: 'Devin',
+        meta: 'Meta Muse',
       },
       cnProviders: {
         accountMode: {
@@ -218,6 +220,12 @@ export default {
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         grokOauth: 'Grok OAuth',
+        devinOauth: 'Devin OAuth / Session Token',
+        devinApikey: 'Direct Devin Token / Key',
+        kimiOauth: 'Kimi Code Device OAuth (Coding Plan)',
+        kimiApikey: 'Connect via API Key (Pay-as-you-go / Coding Plan)',
+        metaOauth: 'Meta Muse Device OAuth / DCA Token',
+        metaApikey: 'Direct Meta Muse API Key',
         antigravityApikey: 'Connect via Base URL + API Key',
         upstream: 'Upstream',
         upstreamDesc: 'Connect via Base URL + API Key'
@@ -1249,6 +1257,8 @@ export default {
         followSteps: 'Follow these steps to authorize your Claude account:',
         step1GenerateUrl: 'Click the button below to generate the authorization URL',
         generateAuthUrl: 'Generate Auth URL',
+        failedToGenerateUrl: 'Failed to generate authorization URL',
+        missingExchangeParams: 'Missing authorization session or code',
         generating: 'Generating...',
         regenerate: 'Regenerate',
         step2OpenUrl: 'Open the URL in your browser and complete authorization',
@@ -1482,6 +1492,56 @@ export default {
                     validateAndCreate: 'Validate & Create',
                     pleaseEnterRefreshToken: 'Please enter Refresh Token',
                     failedToValidateRT: 'Failed to validate Refresh Token'
+                  },
+                  devin: {
+                    title: 'Devin Account Authorization',
+                    followSteps: 'Follow these steps to authorize your Devin account:',
+                    step1GenerateUrl: 'Generate Authorization URL',
+                    generateAuthUrl: 'Generate Auth URL',
+                    step2OpenUrl: 'Open the URL in your browser and sign in to Devin',
+                    openUrlDesc: 'Open the authorization URL in a new tab, sign in to your Devin account, and approve access.',
+                    importantNotice: 'After signing in, copy the authorization code (or full callback URL) and paste it below.',
+                    step3EnterCode: 'Enter Authorization Code or Callback URL',
+                    authCodeDesc: 'Paste the authorization code (or full callback URL) from Devin:',
+                    authCode: 'Authorization Code or URL',
+                    authCodePlaceholder: 'Paste the authorization code or callback URL containing code=...',
+                    authCodeHint: 'You can paste either the full callback URL or just the authorization code',
+                    failedToGenerateUrl: 'Failed to generate Devin auth URL',
+                    missingExchangeParams: 'Missing authorization code or session ID',
+                    failedToExchangeCode: 'Failed to exchange Devin authorization code',
+                    sessionTokenAuth: 'Paste Token',
+                    sessionTokenDesc: 'Paste an existing Devin CLI/Desktop session token (devin-session-token$...) or API key (cog_...). It will be verified automatically.',
+                    sessionTokenPlaceholder: 'Paste devin-session-token$... or cog_...',
+                    validating: 'Validating...',
+                    validateAndCreate: 'Validate & Create',
+                    pleaseEnterToken: 'Please enter a Devin Session Token or API Key',
+                    failedToValidateToken: 'Failed to validate Devin credentials'
+                  },
+                  deviceFlow: {
+                    deviceTab: 'Device Code OAuth',
+                    start: 'Get Device Code',
+                    restart: 'Restart Authorization',
+                    userCodeLabel: 'User Code',
+                    verificationUrlLabel: 'Verification URL',
+                    openVerificationPage: 'Open Verification Page',
+                    waitingApproval: 'Waiting for authorization in your browser...',
+                    expired: 'Device code expired. Please request a new code.'
+                  },
+                  kimi: {
+                    title: 'Kimi Code Account Authorization',
+                    domainLabel: 'Kimi Auth Domain',
+                    domainGlobal: 'Primary (auth.kimi.com)',
+                    domainAlt: 'Alternate (auth.kimi.ai)',
+                    deviceDesc: 'Click below to generate a device code, approve it in your browser with your Kimi Code account, and Sub2API will configure adaptive Coding Plan routing automatically.'
+                  },
+                  meta: {
+                    title: 'Meta Muse Account Authorization',
+                    directTokenTab: 'Paste Token / Key',
+                    deviceDesc: 'Click below to generate a Meta device code, approve it in your browser, and Sub2API will automatically mint a Muse Code API key.',
+                    directTokenDesc: 'Paste an existing Meta DCA token (dca:..., automatically mints a Muse Code API key) or a direct Meta Muse API key.',
+                    directTokenPlaceholder: 'Paste dca:... or Meta Muse API Key',
+                    pleaseEnterToken: 'Please enter a Meta DCA token or API key',
+                    failedToValidateToken: 'Failed to validate Meta credentials'
                   }
                 },      // Gemini specific (platform-wide)
       gemini: {

@@ -411,6 +411,74 @@
       </div>
     </template>
 
+    <!-- Devin accounts: daily & weekly quota windows from GetUserStatus -->
+    <template v-else-if="account.platform === 'devin'">
+      <div v-if="loading && !usageInfo" class="space-y-1.5">
+        <div class="flex items-center gap-1">
+          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+        </div>
+      </div>
+      <div v-else-if="error" class="text-xs text-red-500">
+        {{ error }}
+      </div>
+      <div v-else-if="needsReauth" class="space-y-1">
+        <span class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300">
+          {{ t('admin.accounts.needsReauth') }}
+        </span>
+      </div>
+      <div v-else-if="usageInfo" class="space-y-1">
+        <div v-if="usageInfo.devin_plan" class="mb-0.5 flex items-center gap-1">
+          <span class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+            {{ usageInfo.devin_plan }}
+          </span>
+        </div>
+        <div v-if="usageInfo.error" class="text-xs text-amber-600 dark:text-amber-400 truncate max-w-[200px]" :title="usageInfo.error">
+          {{ usageInfo.error }}
+        </div>
+        <UsageProgressBar
+          v-if="usageInfo.devin_daily"
+          label="1d"
+          :utilization="usageInfo.devin_daily.utilization"
+          :resets-at="usageInfo.devin_daily.resets_at"
+          color="emerald"
+        />
+        <UsageProgressBar
+          v-if="usageInfo.devin_weekly"
+          label="7d"
+          :utilization="usageInfo.devin_weekly.utilization"
+          :resets-at="usageInfo.devin_weekly.resets_at"
+          color="indigo"
+        />
+      </div>
+      <div v-else class="text-xs text-gray-400">-</div>
+      <div v-if="!loading" class="mt-1">
+        <button
+          type="button"
+          class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="activeQueryLoading"
+          @click="loadActiveUsage"
+        >
+          <svg
+            class="h-2.5 w-2.5"
+            :class="{ 'animate-spin': activeQueryLoading }"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+          {{ t('admin.accounts.usageWindow.activeQuery') }}
+        </button>
+      </div>
+    </template>
+
     <!-- Grok OAuth accounts: passive xAI quota headers + local Sub2API usage -->
     <template v-else-if="account.platform === 'grok' && account.type === 'oauth'">
       <div v-if="loading" class="space-y-1.5">
@@ -869,6 +937,9 @@ const showUsageWindows = computed(() => {
   if (isMultiProtocolApiKeyPlatform(props.account.platform)) {
     return true
   }
+  if (props.account.platform === 'devin') {
+    return true
+  }
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
 })
 
@@ -884,6 +955,9 @@ const shouldFetchUsage = computed(() => {
   }
   if (props.account.platform === 'grok') {
     return props.account.type === 'oauth'
+  }
+  if (props.account.platform === 'devin') {
+    return true
   }
   if (props.account.platform === 'openai') {
     return props.account.type === 'oauth'

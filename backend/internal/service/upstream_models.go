@@ -812,6 +812,34 @@ func (s *AccountTestService) fetchUpstreamModelListRequest(ctx context.Context, 
 		return models, body, nil, err
 	}
 
+	if account.Platform == PlatformDevin {
+		if s.devinGatewayService == nil {
+			return nil, nil, nil, newUpstreamModelSyncConfigError("Devin gateway service is not configured", nil)
+		}
+		models, err := s.devinGatewayService.FetchModels(ctx, account)
+		if err != nil {
+			return nil, nil, nil, newUpstreamModelSyncUpstreamError("Failed to fetch Devin models", err)
+		}
+		ids := make([]string, 0, len(models))
+		for _, m := range models {
+			if m.ID != "" {
+				ids = append(ids, m.ID)
+			}
+		}
+		return dedupeAndSortModelIDs(ids), nil, nil, nil
+	}
+
+	if account.Platform == PlatformMeta {
+		if s.metaGatewayService == nil {
+			return nil, nil, nil, newUpstreamModelSyncConfigError("Meta Muse gateway service is not configured", nil)
+		}
+		ids, err := s.metaGatewayService.FetchModels(ctx, account)
+		if err != nil {
+			return nil, nil, nil, newUpstreamModelSyncUpstreamError("Failed to fetch Meta Muse models", err)
+		}
+		return dedupeAndSortModelIDs(ids), nil, nil, nil
+	}
+
 	if s.httpUpstream == nil {
 		return nil, nil, nil, newUpstreamModelSyncConfigError("Upstream HTTP client is not configured", nil)
 	}

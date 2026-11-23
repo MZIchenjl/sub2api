@@ -223,6 +223,88 @@
           </div>
         </div>
 
+        <!-- Session Token Input (Devin) -->
+        <div v-if="inputMethod === 'session_token'" class="space-y-4">
+          <div
+            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+          >
+            <p class="mb-3 text-sm text-blue-700 dark:text-blue-300">
+              {{ t(getOAuthKey('sessionTokenDesc')) }}
+            </p>
+
+            <div class="mb-4">
+              <label
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300"
+              >
+                <Icon name="key" size="sm" class="text-blue-500" />
+                {{ t(getOAuthKey('sessionTokenAuth')) }}
+                <span
+                  v-if="parsedSessionTokenCount > 1"
+                  class="rounded-full bg-blue-500 px-2 py-0.5 text-xs text-white"
+                >
+                  {{ t('admin.accounts.oauth.keysCount', { count: parsedSessionTokenCount }) }}
+                </span>
+              </label>
+              <textarea
+                v-model="sessionTokenInput"
+                rows="3"
+                class="input w-full resize-y font-mono text-sm"
+                :placeholder="t(getOAuthKey('sessionTokenPlaceholder'))"
+                spellcheck="false"
+              ></textarea>
+              <p
+                v-if="parsedSessionTokenCount > 1"
+                class="mt-1 text-xs text-blue-600 dark:text-blue-400"
+              >
+                {{ t('admin.accounts.oauth.batchCreateAccounts', { count: parsedSessionTokenCount }) }}
+              </p>
+            </div>
+
+            <div
+              v-if="error"
+              class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
+            >
+              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
+                {{ error }}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              class="btn btn-primary w-full"
+              :disabled="loading || !sessionTokenInput.trim()"
+              @click="handleValidateSessionToken"
+            >
+              <svg
+                v-if="loading"
+                class="-ml-1 mr-2 h-4 w-4 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  class="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                ></circle>
+                <path
+                  class="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
+              </svg>
+              <Icon v-else name="sparkles" size="sm" class="mr-2" />
+              {{
+                loading
+                  ? t(getOAuthKey('validating'))
+                  : t(getOAuthKey('validateAndCreate'))
+              }}
+            </button>
+          </div>
+        </div>
+
         <!-- SSO Cookie Input (Grok Web -> Grok Build) -->
         <div v-if="inputMethod === 'sso_cookie'" class="space-y-4">
           <div
@@ -989,6 +1071,7 @@ const getOAuthKey = (key: string) => {
   if (props.platform === 'gemini') return `admin.accounts.oauth.gemini.${key}`
   if (props.platform === 'antigravity') return `admin.accounts.oauth.antigravity.${key}`
   if (props.platform === 'grok') return `admin.accounts.oauth.grok.${key}`
+  if (props.platform === 'devin') return `admin.accounts.oauth.devin.${key}`
   return `admin.accounts.oauth.${key}`
 }
 
@@ -1008,6 +1091,7 @@ const oauthImportantNotice = computed(() => {
   if (props.platform === 'openai') return t('admin.accounts.oauth.openai.importantNotice')
   if (props.platform === 'antigravity') return t('admin.accounts.oauth.antigravity.importantNotice')
   if (props.platform === 'grok') return t('admin.accounts.oauth.grok.importantNotice')
+  if (props.platform === 'devin') return t('admin.accounts.oauth.devin.importantNotice')
   return ''
 })
 
@@ -1080,6 +1164,13 @@ const parsedRefreshTokenCount = computed(() => {
     .filter((rt) => rt).length
 })
 
+const parsedSessionTokenCount = computed(() => {
+  return sessionTokenInput.value
+    .split('\n')
+    .map((token) => token.trim())
+    .filter((token) => token).length
+})
+
 const parsedCodexSessionCount = computed(() => {
   const trimmed = codexSessionInput.value.trim()
   if (!trimmed) return 0
@@ -1132,7 +1223,7 @@ watch(inputMethod, (newVal) => {
 // Auto-extract code from callback URL (OpenAI/Gemini/Antigravity/Grok)
 // e.g., http://localhost:8085/callback?code=xxx...&state=...
 watch(authCodeInput, (newVal) => {
-  if (props.platform !== 'openai' && props.platform !== 'gemini' && props.platform !== 'antigravity' && props.platform !== 'grok') return
+  if (props.platform !== 'openai' && props.platform !== 'gemini' && props.platform !== 'antigravity' && props.platform !== 'grok' && props.platform !== 'devin') return
 
   const trimmed = newVal.trim()
   // Check if it looks like a URL with code parameter
@@ -1142,7 +1233,7 @@ watch(authCodeInput, (newVal) => {
       const url = trimmed.includes('?') ? new URL(trimmed) : new URL(`http://localhost/callback?${trimmed.replace(/^\?/, '')}`)
       const code = url.searchParams.get('code')
       const stateParam = url.searchParams.get('state')
-      if ((props.platform === 'openai' || props.platform === 'gemini' || props.platform === 'antigravity' || props.platform === 'grok') && stateParam) {
+      if ((props.platform === 'openai' || props.platform === 'gemini' || props.platform === 'antigravity' || props.platform === 'grok' || props.platform === 'devin') && stateParam) {
         oauthState.value = stateParam
       }
       if (code && code !== trimmed) {
@@ -1153,7 +1244,7 @@ watch(authCodeInput, (newVal) => {
       // If URL parsing fails, try regex extraction
       const match = trimmed.match(/[?&]code=([^&]+)/)
       const stateMatch = trimmed.match(/[?&]state=([^&]+)/)
-      if ((props.platform === 'openai' || props.platform === 'gemini' || props.platform === 'antigravity' || props.platform === 'grok') && stateMatch && stateMatch[1]) {
+      if ((props.platform === 'openai' || props.platform === 'gemini' || props.platform === 'antigravity' || props.platform === 'grok' || props.platform === 'devin') && stateMatch && stateMatch[1]) {
         oauthState.value = stateMatch[1]
       }
       if (match && match[1] && match[1] !== trimmed) {
@@ -1192,6 +1283,12 @@ const handleValidateRefreshToken = () => {
     } else {
       emit('validate-refresh-token', refreshTokenInput.value.trim())
     }
+  }
+}
+
+const handleValidateSessionToken = () => {
+  if (sessionTokenInput.value.trim()) {
+    emit('validate-session-token', sessionTokenInput.value.trim())
   }
 }
 

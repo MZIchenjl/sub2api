@@ -26,7 +26,8 @@ ARG NPM_CONFIG_REGISTRY
 WORKDIR /app/frontend
 
 # Install pnpm (pinned to v9 to match CI and keep builds reproducible)
-RUN corepack enable && corepack prepare pnpm@9 --activate
+RUN COREPACK_NPM_REGISTRY="${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}" corepack enable && \
+    COREPACK_NPM_REGISTRY="${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}" corepack prepare pnpm@9 --activate
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./

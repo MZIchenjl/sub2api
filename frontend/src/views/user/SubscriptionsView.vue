@@ -272,6 +272,8 @@ function platformAccentDotClass(p: string): string {
     case 'openai': return 'bg-emerald-500'
     case 'antigravity': return 'bg-purple-500'
     case 'gemini': return 'bg-blue-500'
+    case 'devin': return 'bg-emerald-500'
+    case 'meta': return 'bg-blue-600'
     default: return 'bg-gray-400'
   }
 }

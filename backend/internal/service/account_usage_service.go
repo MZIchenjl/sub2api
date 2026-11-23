@@ -112,6 +112,11 @@ type antigravityUsageCache struct {
 	timestamp time.Time
 }
 
+type devinUsageCache struct {
+	usageInfo *UsageInfo
+	timestamp time.Time
+}
+
 const (
 	apiCacheTTL         = 3 * time.Minute
 	apiErrorCacheTTL    = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
@@ -128,8 +133,10 @@ type UsageCache struct {
 	apiCache          sync.Map           // accountID -> *apiUsageCache
 	windowStatsCache  sync.Map           // windowStatsCacheKey -> *windowStatsCache
 	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
+	devinCache        sync.Map           // accountID -> *devinUsageCache
 	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
 	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
+	devinFlight       singleflight.Group // 防止同一 Devin 账号的并发请求击穿缓存
 	openAIProbeCache  sync.Map           // accountID -> time.Time
 	grokProbeCache    sync.Map           // accountID -> last billing probe attempt
 }
@@ -241,6 +248,13 @@ type UsageInfo struct {
 	// ThirtyDay is the official monthly billing window (used/monthlyLimit %).
 	ThirtyDay   *UsageProgress      `json:"thirty_day,omitempty"`
 	GrokBilling *xai.BillingSummary `json:"grok_billing,omitempty"`
+
+	// Devin 日/周配额窗口与账号套餐信息
+	DevinDaily   *UsageProgress `json:"devin_daily,omitempty"`
+	DevinWeekly  *UsageProgress `json:"devin_weekly,omitempty"`
+	DevinPlan    string         `json:"devin_plan,omitempty"`
+	DevinEmail   string         `json:"devin_email,omitempty"`
+	DevinOrgName string         `json:"devin_org_name,omitempty"`
 
 	// Antigravity 账号级信息
 	SubscriptionTier    string `json:"subscription_tier,omitempty"`     // 归一化订阅等级: FREE/PRO/ULTRA/UNKNOWN
@@ -425,6 +439,14 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 
 	if account.Platform == PlatformGrok {
 		usage, err := s.getGrokUsage(ctx, account, forceProbe)
+		if err == nil && usage != nil && usage.Error == "" {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
+	}
+
+	if account.Platform == PlatformDevin {
+		usage, err := s.getDevinUsage(ctx, account, forceProbe)
 		if err == nil && usage != nil && usage.Error == "" {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}

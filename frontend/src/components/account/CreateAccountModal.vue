@@ -70,12 +70,12 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
+        <div class="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 sm:grid-cols-4 dark:bg-dark-700" data-tour="account-form-platform">
           <button
             type="button"
             @click="form.platform = 'anthropic'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'anthropic'
                 ? 'bg-white text-orange-600 shadow-sm dark:bg-dark-600 dark:text-orange-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -88,14 +88,14 @@
             type="button"
             @click="form.platform = 'openai'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'openai'
                 ? 'bg-white text-green-600 shadow-sm dark:bg-dark-600 dark:text-green-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
             ]"
           >
             <svg
-              class="h-4 w-4"
+              class="h-4 w-4 shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -113,14 +113,14 @@
             type="button"
             @click="form.platform = 'gemini'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'gemini'
                 ? 'bg-white text-blue-600 shadow-sm dark:bg-dark-600 dark:text-blue-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
             ]"
           >
             <svg
-              class="h-4 w-4"
+              class="h-4 w-4 shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -138,7 +138,7 @@
             type="button"
             @click="form.platform = 'antigravity'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'antigravity'
                 ? 'bg-white text-purple-600 shadow-sm dark:bg-dark-600 dark:text-purple-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -151,7 +151,7 @@
             type="button"
             @click="form.platform = 'grok'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'grok'
                 ? 'bg-white text-zinc-900 shadow-sm dark:bg-dark-600 dark:text-zinc-100'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -164,7 +164,7 @@
             type="button"
             @click="selectTypeSafePlatform()"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'typesafe'
                 ? 'bg-white text-sky-700 shadow-sm dark:bg-dark-600 dark:text-sky-300'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -173,14 +173,42 @@
             <PlatformIcon platform="typesafe" size="sm" />
             TypeSafe / Jev
           </button>
+          <button
+            type="button"
+            data-testid="platform-button-devin"
+            @click="form.platform = 'devin'"
+            :class="[
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'devin'
+                ? 'bg-white text-emerald-700 shadow-sm dark:bg-dark-600 dark:text-emerald-300'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="devin" size="sm" />
+            Devin
+          </button>
+          <button
+            type="button"
+            data-testid="platform-button-meta"
+            @click="form.platform = 'meta'"
+            :class="[
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'meta'
+                ? 'bg-white text-blue-600 shadow-sm dark:bg-dark-600 dark:text-blue-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="meta" size="sm" />
+            Meta Muse
+          </button>
         </div>
         <!-- 国产厂商：Kimi / Zhipu GLM / DeepSeek / MiniMax -->
-        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-testid="platform-row-cn">
+        <div class="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 sm:grid-cols-4 dark:bg-dark-700" data-testid="platform-row-cn">
           <button
             type="button"
             @click="selectCNPlatform('kimi')"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'kimi'
                 ? 'bg-white text-pink-600 shadow-sm dark:bg-dark-600 dark:text-pink-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -193,7 +221,7 @@
             type="button"
             @click="selectCNPlatform('zhipu')"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'zhipu'
                 ? 'bg-white text-indigo-600 shadow-sm dark:bg-dark-600 dark:text-indigo-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -206,7 +234,7 @@
             type="button"
             @click="selectCNPlatform('deepseek')"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'deepseek'
                 ? 'bg-white text-teal-600 shadow-sm dark:bg-dark-600 dark:text-teal-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -219,7 +247,7 @@
             type="button"
             @click="selectCNPlatform('minimax')"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === 'minimax'
                 ? 'bg-white text-rose-600 shadow-sm dark:bg-dark-600 dark:text-rose-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -514,6 +542,159 @@
         </div>
       </div>
 
+      <!-- Account Type Selection (Devin: OAuth / Session Token only) -->
+      <div v-if="form.platform === 'devin'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3" data-tour="account-form-type">
+          <button
+            type="button"
+            data-testid="devin-account-type-oauth"
+            @click="accountCategory = 'oauth-based'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'oauth-based'
+                ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20'
+                : 'border-gray-200 hover:border-emerald-300 dark:border-dark-600 dark:hover:border-emerald-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'oauth-based'
+                  ? 'bg-emerald-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <PlatformIcon platform="devin" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.devinOauth') }}</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Account Type Selection (Meta Muse) -->
+      <div v-if="form.platform === 'meta'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-type">
+          <button
+            type="button"
+            data-testid="meta-account-type-oauth"
+            @click="accountCategory = 'oauth-based'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'oauth-based'
+                ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20'
+                : 'border-gray-200 hover:border-blue-300 dark:border-dark-600 dark:hover:border-blue-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'oauth-based'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <PlatformIcon platform="meta" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.metaOauth') }}</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            data-testid="meta-account-type-api-key"
+            @click="accountCategory = 'apikey'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'apikey'
+                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'apikey'
+                  ? 'bg-purple-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="key" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.metaApikey') }}</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Account Type Selection (Kimi: API Key default vs Kimi Code OAuth) -->
+      <div v-if="form.platform === 'kimi'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-type">
+          <button
+            type="button"
+            data-testid="kimi-account-type-api-key"
+            @click="accountCategory = 'apikey'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'apikey'
+                ? 'border-pink-500 bg-pink-50 dark:bg-pink-900/20'
+                : 'border-gray-200 hover:border-pink-300 dark:border-dark-600 dark:hover:border-pink-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'apikey'
+                  ? 'bg-pink-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="key" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.kimiApikey') }}</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            data-testid="kimi-account-type-oauth"
+            @click="accountCategory = 'oauth-based'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'oauth-based'
+                ? 'border-pink-500 bg-pink-50 dark:bg-pink-900/20'
+                : 'border-gray-200 hover:border-pink-300 dark:border-dark-600 dark:hover:border-pink-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'oauth-based'
+                  ? 'bg-pink-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <PlatformIcon platform="kimi" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.kimiOauth') }}</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
       <!-- OpenCode Zen vs Go -->
       <div v-if="isOpenCodeGoPlatform">
         <label class="input-label">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
@@ -597,7 +778,7 @@
       </div>
 
       <!-- Account Mode Selection (Kimi / Zhipu / DeepSeek) -->
-      <div v-if="isCNPlatform && !isOpenCodeGoPlatform">
+      <div v-if="isCNPlatform && !isOpenCodeGoPlatform && !(form.platform === 'kimi' && accountCategory === 'oauth-based')">
         <label class="input-label">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-mode">
           <!-- Pay-as-you-go (token balance) -->
@@ -657,7 +838,7 @@
       </div>
 
       <!-- API Protocol Selection (Kimi / Zhipu / DeepSeek / OpenCode) -->
-      <div v-if="isMultiProtocolPlatform" class="mt-4">
+      <div v-if="isMultiProtocolPlatform && !(form.platform === 'kimi' && accountCategory === 'oauth-based')" class="mt-4">
         <label class="input-label">{{ t('admin.accounts.cnProviders.apiProtocol.title') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <button
@@ -3785,7 +3966,24 @@
 
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
+      <DeviceCodeAuthFlow
+        v-if="isDeviceCodeOAuthPlatform"
+        ref="deviceFlowRef"
+        :platform="form.platform === 'meta' ? 'meta' : 'kimi'"
+        :kimi-domain="kimiOAuth.domain.value"
+        :user-code="form.platform === 'meta' ? metaOAuth.userCode.value : kimiOAuth.userCode.value"
+        :verification-uri="form.platform === 'meta' ? metaOAuth.verificationUri.value : kimiOAuth.verificationUri.value"
+        :verification-uri-complete="form.platform === 'meta' ? metaOAuth.verificationUriComplete.value : kimiOAuth.verificationUriComplete.value"
+        :polling="form.platform === 'meta' ? metaOAuth.polling.value : kimiOAuth.polling.value"
+        :loading="form.platform === 'meta' ? metaOAuth.loading.value : kimiOAuth.loading.value"
+        :error="form.platform === 'meta' ? metaOAuth.error.value : kimiOAuth.error.value"
+        @update:kimi-domain="(val) => (kimiOAuth.domain.value = val)"
+        @start="handleDeviceFlowStart"
+        @stop="handleDeviceFlowStop"
+        @validate-token="handleMetaValidateDirectToken"
+      />
       <OAuthAuthorizationFlow
+        v-else
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
         :auth-url="currentAuthUrl"
@@ -3793,12 +3991,12 @@
         :loading="currentOAuthLoading"
         :error="currentOAuthError"
         :show-help="form.platform === 'anthropic'"
-        :show-proxy-warning="form.platform !== 'openai' && form.platform !== 'grok' && !!form.proxy_id"
+        :show-proxy-warning="form.platform !== 'openai' && form.platform !== 'grok' && form.platform !== 'devin' && !!form.proxy_id"
         :allow-multiple="form.platform === 'anthropic'"
         :show-cookie-option="form.platform === 'anthropic'"
         :show-refresh-token-option="form.platform === 'openai' || form.platform === 'antigravity' || form.platform === 'grok'"
         :show-mobile-refresh-token-option="form.platform === 'openai'"
-        :show-session-token-option="false"
+        :show-session-token-option="form.platform === 'devin'"
         :show-access-token-option="false"
         :show-codex-session-import-option="form.platform === 'openai'"
         :show-agent-identity-option="form.platform === 'openai'"
@@ -3868,7 +4066,7 @@
           {{ t('common.back') }}
         </button>
         <button
-          v-if="isManualInputMethod"
+          v-if="!isDeviceCodeOAuthPlatform && isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"
           class="btn btn-primary"
@@ -4159,6 +4357,9 @@ import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
 import { useGrokOAuth } from '@/composables/useGrokOAuth'
+import { useDevinOAuth } from '@/composables/useDevinOAuth'
+import { useKimiOAuth } from '@/composables/useKimiOAuth'
+import { useMetaOAuth } from '@/composables/useMetaOAuth'
 import type {
   Proxy,
   AdminGroup,
@@ -4245,6 +4446,7 @@ import {
   type OpenAIWSMode
 } from '@/utils/openaiWsMode'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
+import DeviceCodeAuthFlow from './DeviceCodeAuthFlow.vue'
 
 // Type for exposed OAuthAuthorizationFlow component
 // Note: defineExpose automatically unwraps refs, so we use the unwrapped types
@@ -4270,8 +4472,13 @@ const oauthStepTitle = computed(() => {
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
   if (form.platform === 'antigravity') return t('admin.accounts.oauth.antigravity.title')
   if (form.platform === 'grok') return t('admin.accounts.oauth.grok.title')
+  if (form.platform === 'devin') return t('admin.accounts.oauth.devin.title')
+  if (form.platform === 'kimi') return t('admin.accounts.oauth.kimi.title')
+  if (form.platform === 'meta') return t('admin.accounts.oauth.meta.title')
   return t('admin.accounts.oauth.title')
 })
+
+const isDeviceCodeOAuthPlatform = computed(() => form.platform === 'kimi' || form.platform === 'meta')
 
 // Platform-specific hints for API Key type
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
@@ -4285,15 +4492,15 @@ const withUpstreamRequestIdHeader = <T extends Record<string, unknown> | undefin
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
-  if (form.platform === 'grok') return ''
+  if (form.platform === 'grok' || form.platform === 'devin' || form.platform === 'meta') return ''
   return t('admin.accounts.baseUrlHint')
 })
 
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
-  // Grok 与多协议供应商没有对应的说明文案；通用文案指 Claude Console Key。
-  if (form.platform === 'grok' || isMultiProtocolPlatform.value) return ''
+  // Grok / Devin / Meta 与多协议供应商没有对应的说明文案；通用文案指 Claude Console Key。
+  if (form.platform === 'grok' || form.platform === 'devin' || form.platform === 'meta' || isMultiProtocolPlatform.value) return ''
   return t('admin.accounts.apiKeyHint')
 })
 
@@ -4312,6 +4519,10 @@ const apiKeyBaseUrlPlaceholder = computed(() => {
       return 'https://api.x.ai/v1'
     case 'typesafe':
       return 'https://api.typesafe.ai'
+    case 'devin':
+      return 'https://server.codeium.com'
+    case 'meta':
+      return 'https://api.meta.ai/v1'
     default:
       return 'https://api.anthropic.com'
   }
@@ -4336,6 +4547,10 @@ const apiKeyValuePlaceholder = computed(() => {
       return 'sk-...'
     case 'typesafe':
       return 'ts-...'
+    case 'devin':
+      return 'cog_... / devin-session-token$...'
+    case 'meta':
+      return 'Meta Muse API Key / dca:...'
     default:
       return isMultiProtocolPlatform.value ? 'sk-...' : 'sk-ant-...'
   }
@@ -4365,6 +4580,10 @@ const openaiOAuth = useOpenAIOAuth() // For OpenAI OAuth
 const geminiOAuth = useGeminiOAuth() // For Gemini OAuth
 const antigravityOAuth = useAntigravityOAuth() // For Antigravity OAuth
 const grokOAuth = useGrokOAuth() // For Grok OAuth
+const devinOAuth = useDevinOAuth() // For Devin OAuth
+const kimiOAuth = useKimiOAuth() // For Kimi Code Device OAuth
+const metaOAuth = useMetaOAuth() // For Meta Muse Device OAuth
+const deviceFlowRef = ref<{ reset: () => void } | null>(null)
 
 // Computed: current OAuth state for template binding
 const currentAuthUrl = computed(() => {
@@ -4372,6 +4591,7 @@ const currentAuthUrl = computed(() => {
   if (form.platform === 'gemini') return geminiOAuth.authUrl.value
   if (form.platform === 'antigravity') return antigravityOAuth.authUrl.value
   if (form.platform === 'grok') return grokOAuth.authUrl.value
+  if (form.platform === 'devin') return devinOAuth.authUrl.value
   return oauth.authUrl.value
 })
 
@@ -4380,6 +4600,7 @@ const currentSessionId = computed(() => {
   if (form.platform === 'gemini') return geminiOAuth.sessionId.value
   if (form.platform === 'antigravity') return antigravityOAuth.sessionId.value
   if (form.platform === 'grok') return grokOAuth.sessionId.value
+  if (form.platform === 'devin') return devinOAuth.sessionId.value
   return oauth.sessionId.value
 })
 
@@ -4388,6 +4609,7 @@ const currentOAuthLoading = computed(() => {
   if (form.platform === 'gemini') return geminiOAuth.loading.value
   if (form.platform === 'antigravity') return antigravityOAuth.loading.value
   if (form.platform === 'grok') return grokOAuth.loading.value
+  if (form.platform === 'devin') return devinOAuth.loading.value
   return oauth.loading.value
 })
 
@@ -4396,6 +4618,7 @@ const currentOAuthError = computed(() => {
   if (form.platform === 'gemini') return geminiOAuth.error.value
   if (form.platform === 'antigravity') return antigravityOAuth.error.value
   if (form.platform === 'grok') return grokOAuth.error.value
+  if (form.platform === 'devin') return devinOAuth.error.value
   return oauth.error.value
 })
 
@@ -5105,6 +5328,9 @@ const canExchangeCode = computed(() => {
   if (form.platform === 'grok') {
     return authCode.trim() && grokOAuth.sessionId.value && !grokOAuth.loading.value
   }
+  if (form.platform === 'devin') {
+    return authCode.trim() && devinOAuth.sessionId.value && !devinOAuth.loading.value
+  }
   return authCode.trim() && oauth.sessionId.value && !oauth.loading.value
 })
 
@@ -5180,6 +5406,10 @@ watch(
               ? 'https://api.x.ai/v1'
               : newPlatform === 'typesafe'
                 ? 'https://api.typesafe.ai'
+                : newPlatform === 'devin'
+                  ? 'https://server.codeium.com'
+                  : newPlatform === 'meta'
+                    ? 'https://api.meta.ai/v1'
               : 'https://api.anthropic.com'
     }
     // Clear model-related settings
@@ -5214,6 +5444,14 @@ watch(
       modelRestrictionMode.value = 'mapping'
       form.concurrency = 1
       form.load_factor = null
+    }
+    if (newPlatform === 'devin') {
+      accountCategory.value = 'oauth-based'
+      addMethod.value = 'oauth'
+    }
+    if (newPlatform === 'meta') {
+      accountCategory.value = 'oauth-based'
+      addMethod.value = 'oauth'
     }
     if (newPlatform !== 'gemini' && newPlatform !== 'anthropic' && accountCategory.value === 'service_account') {
       accountCategory.value = 'oauth-based'
@@ -5269,6 +5507,10 @@ watch(
     geminiOAuth.resetState()
     antigravityOAuth.resetState()
     grokOAuth.resetState()
+    devinOAuth.resetState()
+    kimiOAuth.resetState()
+    metaOAuth.resetState()
+    deviceFlowRef.value?.reset()
   }
 )
 
@@ -5758,7 +6000,11 @@ const resetForm = () => {
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
   grokOAuth.resetState()
+  devinOAuth.resetState()
+  kimiOAuth.resetState()
+  metaOAuth.resetState()
   oauthFlowRef.value?.reset()
+  deviceFlowRef.value?.reset()
   antigravityMixedChannelConfirmed.value = false
   upstreamModelsPreviewed.value = false
   clearMixedChannelDialog()
@@ -6157,6 +6403,10 @@ const handleSubmit = async () => {
           ? 'https://api.x.ai/v1'
           : form.platform === 'typesafe'
             ? 'https://api.typesafe.ai'
+            : form.platform === 'devin'
+              ? 'https://server.codeium.com'
+              : form.platform === 'meta'
+                ? 'https://api.meta.ai/v1'
           : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
@@ -6275,7 +6525,68 @@ const goBackToBasicInfo = () => {
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
   grokOAuth.resetState()
+  devinOAuth.resetState()
+  kimiOAuth.resetState()
+  metaOAuth.resetState()
   oauthFlowRef.value?.reset()
+  deviceFlowRef.value?.reset()
+}
+
+const handleDeviceFlowStart = async () => {
+  if (form.platform === 'kimi') {
+    await kimiOAuth.startDeviceFlow(form.proxy_id, async (tokenInfo) => {
+      const credentials = kimiOAuth.buildCredentials(tokenInfo)
+      const modelMapping = buildModelMappingObject(
+        modelRestrictionMode.value,
+        allowedModels.value,
+        modelMappings.value
+      )
+      if (modelMapping) {
+        credentials.model_mapping = modelMapping
+      }
+      const extra = kimiOAuth.buildExtra(tokenInfo)
+      await createAccountAndFinish('kimi', 'oauth', credentials, extra)
+    })
+  } else if (form.platform === 'meta') {
+    await metaOAuth.startDeviceFlow(form.proxy_id, async (tokenInfo) => {
+      const credentials = metaOAuth.buildCredentials(tokenInfo)
+      const modelMapping = buildModelMappingObject(
+        modelRestrictionMode.value,
+        allowedModels.value,
+        modelMappings.value
+      )
+      if (modelMapping) {
+        credentials.model_mapping = modelMapping
+      }
+      const extra = metaOAuth.buildExtra(tokenInfo)
+      await createAccountAndFinish('meta', 'oauth', credentials, extra)
+    })
+  }
+}
+
+const handleDeviceFlowStop = () => {
+  if (form.platform === 'kimi') {
+    kimiOAuth.stopPolling()
+  } else if (form.platform === 'meta') {
+    metaOAuth.stopPolling()
+  }
+}
+
+const handleMetaValidateDirectToken = async (token: string) => {
+  if (form.platform !== 'meta') return
+  const tokenInfo = await metaOAuth.validateToken(token, undefined, form.proxy_id)
+  if (!tokenInfo) return
+  const credentials = metaOAuth.buildCredentials(tokenInfo)
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
+  if (modelMapping) {
+    credentials.model_mapping = modelMapping
+  }
+  const extra = metaOAuth.buildExtra(tokenInfo)
+  await createAccountAndFinish('meta', 'oauth', credentials, extra)
 }
 
 const handleGenerateUrl = async () => {
@@ -6292,6 +6603,8 @@ const handleGenerateUrl = async () => {
     await antigravityOAuth.generateAuthUrl(form.proxy_id)
   } else if (form.platform === 'grok') {
     await grokOAuth.generateAuthUrl(form.proxy_id)
+  } else if (form.platform === 'devin') {
+    await devinOAuth.generateAuthUrl(form.proxy_id)
   } else {
     await oauth.generateAuthUrl(addMethod.value, form.proxy_id)
   }
@@ -6307,8 +6620,93 @@ const handleValidateRefreshToken = (rt: string) => {
   }
 }
 
-const handleValidateSessionToken = (_sessionToken: string) => {
-  // Session token validation removed
+const handleValidateSessionToken = async (sessionTokenInput: string) => {
+  if (form.platform !== 'devin') return
+
+  const tokens = sessionTokenInput
+    .split('\n')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+
+  if (tokens.length === 0) {
+    devinOAuth.error.value = t('admin.accounts.oauth.devin.pleaseEnterToken')
+    return
+  }
+
+  if (tokens.length === 1) {
+    const tokenInfo = await devinOAuth.validateToken(tokens[0], undefined, form.proxy_id)
+    if (!tokenInfo) return
+    const credentials = devinOAuth.buildCredentials(tokenInfo)
+    const extra = devinOAuth.buildExtra(tokenInfo)
+    await createAccountAndFinish('devin', 'oauth', credentials, extra)
+    return
+  }
+
+  devinOAuth.loading.value = true
+  devinOAuth.error.value = ''
+
+  let successCount = 0
+  let failedCount = 0
+  const errors: string[] = []
+
+  try {
+    for (let i = 0; i < tokens.length; i++) {
+      try {
+        const tokenInfo = await devinOAuth.validateToken(tokens[i], undefined, form.proxy_id)
+        if (!tokenInfo) {
+          failedCount++
+          errors.push(`#${i + 1}: ${devinOAuth.error.value || 'Validation failed'}`)
+          devinOAuth.error.value = ''
+          continue
+        }
+
+        const credentials = devinOAuth.buildCredentials(tokenInfo)
+        const extra = devinOAuth.buildExtra(tokenInfo)
+        const accountName = `${form.name || tokenInfo.email || 'Devin Account'} #${i + 1}`
+
+        if (!applyTempUnschedConfig(credentials)) {
+          return
+        }
+
+        await adminAPI.accounts.create({
+          name: accountName,
+          notes: form.notes,
+          platform: 'devin',
+          type: 'oauth',
+          credentials,
+          extra: withUpstreamRequestIdHeader(extra),
+          proxy_id: form.proxy_id,
+          concurrency: form.concurrency,
+          load_factor: form.load_factor ?? undefined,
+          priority: form.priority,
+          rate_multiplier: form.rate_multiplier,
+          group_ids: form.group_ids,
+          expires_at: form.expires_at,
+          auto_pause_on_expired: autoPauseOnExpired.value
+        })
+        successCount++
+      } catch (error: any) {
+        failedCount++
+        const errMsg = error.response?.data?.detail || error.message || 'Unknown error'
+        errors.push(`#${i + 1}: ${errMsg}`)
+      }
+    }
+
+    if (successCount > 0 && failedCount === 0) {
+      appStore.showSuccess(t('admin.accounts.oauth.batchSuccess', { count: successCount }))
+      emit('created')
+      handleClose()
+    } else if (successCount > 0) {
+      appStore.showWarning(t('admin.accounts.oauth.batchPartialSuccess', { success: successCount, failed: failedCount }))
+      devinOAuth.error.value = errors.join('\n')
+      emit('created')
+    } else {
+      devinOAuth.error.value = errors.join('\n')
+      appStore.showError(t('admin.accounts.oauth.batchFailed'))
+    }
+  } finally {
+    devinOAuth.loading.value = false
+  }
 }
 
 const formatDateTimeLocal = formatDateTimeLocalInput
@@ -7270,6 +7668,26 @@ const handleGrokExchange = async (authCode: string) => {
   }
 }
 
+// Devin OAuth 授权码兑换
+const handleDevinExchange = async (authCode: string) => {
+  if (!authCode.trim() || !devinOAuth.sessionId.value) return
+
+  const stateFromInput = oauthFlowRef.value?.oauthState || ''
+  const stateToUse = stateFromInput || devinOAuth.state.value
+
+  const tokenInfo = await devinOAuth.exchangeAuthCode({
+    code: authCode.trim(),
+    sessionId: devinOAuth.sessionId.value,
+    state: stateToUse,
+    proxyId: form.proxy_id
+  })
+  if (!tokenInfo) return
+
+  const credentials = devinOAuth.buildCredentials(tokenInfo)
+  const extra = devinOAuth.buildExtra(tokenInfo)
+  await createAccountAndFinish('devin', 'oauth', credentials, extra)
+}
+
 // Anthropic OAuth 授权码兑换
 const handleAnthropicExchange = async (authCode: string) => {
   if (!authCode.trim() || !oauth.sessionId.value) return
@@ -7372,6 +7790,8 @@ const handleExchangeCode = async () => {
       return handleAntigravityExchange(authCode)
     case 'grok':
       return handleGrokExchange(authCode)
+    case 'devin':
+      return handleDevinExchange(authCode)
     default:
       return handleAnthropicExchange(authCode)
   }

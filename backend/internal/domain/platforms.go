@@ -19,6 +19,10 @@ const (
 	PlatformGatewayGemini PlatformGateway = "gemini"
 	// PlatformGatewayAntigravity 由 Antigravity 网关处理。
 	PlatformGatewayAntigravity PlatformGateway = "antigravity"
+	// PlatformGatewayDevin 由 Devin 网关处理（Connect-RPC Protobuf 上游）。
+	PlatformGatewayDevin PlatformGateway = "devin"
+	// PlatformGatewayMeta 由 Meta Muse 网关处理（api.meta.ai/v1/responses 上游）。
+	PlatformGatewayMeta PlatformGateway = "meta"
 )
 
 // PlatformSpec 描述一个具体（非 composite）平台。
@@ -48,6 +52,8 @@ var platformList = []PlatformSpec{
 	{ID: PlatformTypeSafe, DisplayName: "TypeSafe / Jev", Gateway: PlatformGatewayAnthropic, LiteLLMProvider: "typesafe"},
 	{ID: PlatformCommandCode, DisplayName: "Command Code", Gateway: PlatformGatewayOpenAI},
 	{ID: PlatformCline, DisplayName: "Cline", Gateway: PlatformGatewayOpenAI},
+	{ID: PlatformDevin, DisplayName: "Devin", Gateway: PlatformGatewayDevin},
+	{ID: PlatformMeta, DisplayName: "Meta Muse", Gateway: PlatformGatewayMeta},
 }
 
 var platformIndex = func() map[string]int {

@@ -979,6 +979,8 @@ export default {
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
+        devin: 'Devin',
+        meta: 'Meta Muse',
         composite: 'Composite',
       },
       saving: '保存中...',

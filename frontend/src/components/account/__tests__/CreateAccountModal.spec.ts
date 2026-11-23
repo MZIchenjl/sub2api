@@ -14,6 +14,11 @@ const {
   showWarningMock,
   importCodexSessionMock,
   createOpenAICodexPATMock,
+  kimiStartDeviceFlowMock,
+  kimiPollDeviceFlowMock,
+  metaStartDeviceFlowMock,
+  metaPollDeviceFlowMock,
+  metaValidateTokenMock,
   authIsSimpleMode,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
@@ -22,6 +27,11 @@ const {
   showWarningMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
+  kimiStartDeviceFlowMock: vi.fn(),
+  kimiPollDeviceFlowMock: vi.fn(),
+  metaStartDeviceFlowMock: vi.fn(),
+  metaPollDeviceFlowMock: vi.fn(),
+  metaValidateTokenMock: vi.fn(),
   authIsSimpleMode: { value: true },
 }))
 
@@ -57,6 +67,15 @@ vi.mock('@/api/admin', () => ({
     },
     tlsFingerprintProfiles: {
       list: vi.fn().mockResolvedValue([]),
+    },
+    kimi: {
+      startDeviceFlow: kimiStartDeviceFlowMock,
+      pollDeviceFlow: kimiPollDeviceFlowMock,
+    },
+    meta: {
+      startDeviceFlow: metaStartDeviceFlowMock,
+      pollDeviceFlow: metaPollDeviceFlowMock,
+      validateToken: metaValidateTokenMock,
     },
   },
 }))
@@ -138,6 +157,32 @@ const ModelWhitelistSelectorStub = defineComponent({
   >models</button>`,
 })
 
+const DeviceCodeAuthFlowStub = defineComponent({
+  name: 'DeviceCodeAuthFlow',
+  props: {
+    platform: String,
+    kimiDomain: String,
+    userCode: String,
+    verificationUri: String,
+    verificationUriComplete: String,
+    polling: Boolean,
+    loading: Boolean,
+    error: String,
+  },
+  emits: ['update:kimi-domain', 'start', 'stop', 'validate-token'],
+  methods: {
+    reset() {},
+  },
+  template: `
+    <div data-testid="device-code-auth-flow" :data-platform="platform" :data-kimi-domain="kimiDomain" :data-user-code="userCode">
+      <button type="button" data-testid="device-domain-ai" @click="$emit('update:kimi-domain', 'kimi.ai')">kimi.ai</button>
+      <button type="button" data-testid="device-start" @click="$emit('start')">start</button>
+      <button type="button" data-testid="device-stop" @click="$emit('stop')">stop</button>
+      <button type="button" data-testid="device-validate-meta-token" @click="$emit('validate-token', 'dca:test-token')">validate</button>
+    </div>
+  `,
+})
+
 function mountModal(groups: any[] = []) {
   return mount(CreateAccountModal, {
     props: { show: true, proxies: [], groups },
@@ -145,6 +190,7 @@ function mountModal(groups: any[] = []) {
       stubs: {
         BaseDialog: BaseDialogStub,
         OAuthAuthorizationFlow: OAuthAuthorizationFlowStub,
+        DeviceCodeAuthFlow: DeviceCodeAuthFlowStub,
         ConfirmDialog: true,
         Select: true,
         Icon: true,
@@ -725,6 +771,20 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(payload?.credentials?.api_base_urls).not.toHaveProperty('anthropic')
   })
 
+  it('only offers OAuth for Devin and advances to Step 2 on submit', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-devin"]').trigger('click')
+    expect(wrapper.find('[data-testid="devin-account-type-oauth"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="devin-account-type-api-key"]').exists()).toBe(false)
+
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Devin OAuth')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(true)
+  })
+
   it('submits adaptive Kimi protocol endpoints', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'Kimi')
@@ -1077,5 +1137,157 @@ describe('CreateAccountModal Vertex API key auth', () => {
     await selectButtonByText(wrapper, 'admin.accounts.vertexLabel')
     expect(wrapper.find('[data-testid="vertex-auth-mode-apikey"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="vertex-api-key-input"]').exists()).toBe(false)
+  })
+})
+
+describe('CreateAccountModal Meta Muse and Kimi Code OAuth', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 55, platform: 'meta', type: 'oauth' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+    syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
+    kimiStartDeviceFlowMock.mockReset()
+    kimiPollDeviceFlowMock.mockReset()
+    metaStartDeviceFlowMock.mockReset()
+    metaPollDeviceFlowMock.mockReset()
+    metaValidateTokenMock.mockReset()
+  })
+
+  it('creates a Meta Muse API Key account with default https://api.meta.ai/v1 base_url', async () => {
+    createAccountMock.mockResolvedValueOnce({ id: 56, platform: 'meta', type: 'apikey' })
+    const wrapper = mountModal()
+
+    await wrapper.get('[data-testid="platform-button-meta"]').trigger('click')
+    await wrapper.get('[data-testid="meta-account-type-api-key"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Meta Muse API Key')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('meta-api-key-123')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+      name: 'Meta Muse API Key',
+      platform: 'meta',
+      type: 'apikey',
+      credentials: {
+        api_key: 'meta-api-key-123',
+        base_url: 'https://api.meta.ai/v1',
+      },
+    })
+  })
+
+  it('validates a Meta Muse dca token in Step 2 DeviceCodeAuthFlow and creates an OAuth account', async () => {
+    metaValidateTokenMock.mockResolvedValueOnce({
+      api_key: 'minted-meta-key',
+      dca_token: 'dca:test-token',
+      base_url: 'https://api.meta.ai/v1',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      expires_at: 1893456000,
+    })
+    const wrapper = mountModal()
+
+    await wrapper.get('[data-testid="platform-button-meta"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Meta Muse OAuth')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const flow = wrapper.get('[data-testid="device-code-auth-flow"]')
+    expect(flow.attributes('data-platform')).toBe('meta')
+
+    await wrapper.get('[data-testid="device-validate-meta-token"]').trigger('click')
+    await flushPromises()
+
+    expect(metaValidateTokenMock).toHaveBeenCalledWith({ token: 'dca:test-token' })
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+      name: 'Meta Muse OAuth',
+      platform: 'meta',
+      type: 'oauth',
+      credentials: {
+        api_key: 'minted-meta-key',
+        dca_token: 'dca:test-token',
+        base_url: 'https://api.meta.ai/v1',
+      },
+      extra: {
+        meta_auth_method: 'oauth',
+      },
+    })
+  })
+
+  it('completes Kimi Code OAuth device flow and creates a coding adaptive oauth account', async () => {
+    vi.useFakeTimers()
+    try {
+      createAccountMock.mockResolvedValueOnce({ id: 57, platform: 'kimi', type: 'oauth' })
+      kimiStartDeviceFlowMock.mockResolvedValueOnce({
+        session_id: 'kimi-sess-1',
+        user_code: 'ABCD-1234',
+        verification_uri: 'https://auth.kimi.ai/verify',
+        verification_uri_complete: 'https://auth.kimi.ai/verify?code=ABCD-1234',
+        expires_in: 600,
+        interval: 2,
+        domain: 'kimi.ai',
+      })
+      kimiPollDeviceFlowMock.mockResolvedValueOnce({
+        status: 'completed',
+        token: {
+          access_token: 'kimi-access-token',
+          refresh_token: 'kimi-refresh-token',
+          token_type: 'Bearer',
+          domain: 'kimi.ai',
+          api_base_url: 'https://api.kimi.ai/coding',
+          device_id: 'dev-1',
+          expires_in: 3600,
+          expires_at: 1893456000,
+        },
+      })
+
+      const wrapper = mountModal()
+      await selectButtonByText(wrapper, 'Kimi')
+      await wrapper.get('[data-testid="kimi-account-type-oauth"]').trigger('click')
+      await wrapper.get('form#create-account-form input[type="text"]').setValue('Kimi Code OAuth')
+      await wrapper.get('form#create-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      const flow = wrapper.get('[data-testid="device-code-auth-flow"]')
+      expect(flow.attributes('data-platform')).toBe('kimi')
+
+      await wrapper.get('[data-testid="device-domain-ai"]').trigger('click')
+      await wrapper.get('[data-testid="device-start"]').trigger('click')
+      await flushPromises()
+
+      expect(kimiStartDeviceFlowMock).toHaveBeenCalledWith({ domain: 'kimi.ai' })
+      expect(flow.attributes('data-user-code')).toBe('ABCD-1234')
+
+      await vi.advanceTimersByTimeAsync(2000)
+      await flushPromises()
+
+      expect(kimiPollDeviceFlowMock).toHaveBeenCalledWith({ session_id: 'kimi-sess-1' })
+      expect(createAccountMock).toHaveBeenCalledTimes(1)
+      expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+        name: 'Kimi Code OAuth',
+        platform: 'kimi',
+        type: 'oauth',
+        credentials: {
+          access_token: 'kimi-access-token',
+          refresh_token: 'kimi-refresh-token',
+          kimi_domain: 'kimi.ai',
+          account_mode: 'coding',
+          api_protocol: 'adaptive',
+          base_url: 'https://api.kimi.ai/coding/v1',
+          api_base_urls: {
+            chat_completions: 'https://api.kimi.ai/coding/v1',
+            anthropic: 'https://api.kimi.ai/coding',
+            responses: 'https://api.kimi.ai/coding/v1',
+          },
+        },
+        extra: {
+          kimi_domain: 'kimi.ai',
+          kimi_auth_method: 'oauth',
+        },
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
