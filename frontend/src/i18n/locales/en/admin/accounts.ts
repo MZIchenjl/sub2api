@@ -1257,6 +1257,8 @@ export default {
         followSteps: 'Follow these steps to authorize your Claude account:',
         step1GenerateUrl: 'Click the button below to generate the authorization URL',
         generateAuthUrl: 'Generate Auth URL',
+        failedToGenerateUrl: 'Failed to generate authorization URL',
+        missingExchangeParams: 'Missing authorization session or code',
         generating: 'Generating...',
         regenerate: 'Regenerate',
         step2OpenUrl: 'Open the URL in your browser and complete authorization',

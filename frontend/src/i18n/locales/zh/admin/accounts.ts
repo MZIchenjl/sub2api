@@ -1368,6 +1368,8 @@ export default {
         followSteps: '按照以下步骤授权您的 Claude 账号：',
         step1GenerateUrl: '点击下方按钮生成授权 URL',
         generateAuthUrl: '生成授权 URL',
+        failedToGenerateUrl: '生成授权 URL 失败',
+        missingExchangeParams: '缺少授权会话或授权码',
         generating: '生成中...',
         regenerate: '重新生成',
         step2OpenUrl: '在浏览器中打开 URL 并完成授权',

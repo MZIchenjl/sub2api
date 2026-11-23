@@ -771,23 +771,18 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(payload?.credentials?.api_base_urls).not.toHaveProperty('anthropic')
   })
 
-  it('creates a Devin API key account with default Codeium base URL', async () => {
+  it('only offers OAuth for Devin and advances to Step 2 on submit', async () => {
     const wrapper = mountModal()
     await wrapper.get('[data-testid="platform-button-devin"]').trigger('click')
-    await wrapper.get('[data-testid="devin-account-type-api-key"]').trigger('click')
-    await wrapper.get('form#create-account-form input[type="text"]').setValue('Devin Key')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('cog_test_key')
+    expect(wrapper.find('[data-testid="devin-account-type-oauth"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="devin-account-type-api-key"]').exists()).toBe(false)
 
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Devin OAuth')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 
-    const payload = createAccountMock.mock.calls[0]?.[0]
-    expect(payload?.platform).toBe('devin')
-    expect(payload?.type).toBe('apikey')
-    expect(payload?.credentials).toMatchObject({
-      base_url: 'https://server.codeium.com',
-      api_key: 'cog_test_key',
-    })
+    expect(createAccountMock).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(true)
   })
 
   it('submits adaptive Kimi protocol endpoints', async () => {
