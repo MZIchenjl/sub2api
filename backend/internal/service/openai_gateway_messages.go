@@ -47,7 +47,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	ClearActualOpenAIUpstreamEndpoint(c)
 	// Web Search 模拟：Chat Completions 转换会丢掉 web_search 工具，纯 web_search
 	// 请求在此直接调用搜索 API 构造 Anthropic 响应，不访问上游。
-	if groupID := getOpenAIGroupIDFromContext(c); shouldEmulateWebSearchFor(ctx, s.settingService, s.channelService, account, &groupID, body) {
+	// 当账号/渠道开启了 DeepSeek 官方联网搜索且目标为官方 api.deepseek.com 时，
+	// 跳过第三方搜索模拟，直通 DeepSeek 官方免费服务端联网搜索。
+	if groupID := getOpenAIGroupIDFromContext(c); !s.shouldBypassWebSearchEmulationForDeepSeek(ctx, c, account, body, defaultMappedModel) &&
+		shouldEmulateWebSearchFor(ctx, s.settingService, s.channelService, account, &groupID, body) {
 		stream := gjson.GetBytes(body, "stream").Bool()
 		res, err := writeEmulatedWebSearch(ctx, c, account, body, gjson.GetBytes(body, "model").String(), stream)
 		if err != nil {

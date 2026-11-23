@@ -216,6 +216,8 @@ export default {
         codexImageGenerationBridgeHint: '开启后，OpenAI 分组仅会为非 Responses Lite 的 Codex /responses 文本请求自动注入 hosted image_generation 工具。桥接不会为 Responses Lite 注入工具；本地 image_gen 的处理由客户端和账号策略决定。仅在路由账号支持图片生成时开启。',
         bedrockCCCompat: 'Bedrock CC 兼容',
         bedrockCCCompatHint: '⚠️ 开启后，该渠道下 Bedrock 账号的请求将进行 Claude Code 兼容处理（thinking 类型转换、tool_use ID 清理）',
+        deepseekWebSearch: 'DeepSeek 官方联网搜索',
+        deepseekWebSearchHint: '开启后，直连 DeepSeek 官方 API（api.deepseek.com）的账号将放行并适配原生免费服务端联网搜索（跳过第三方搜索模拟、保留多轮搜索上下文、自动适配 Flash/Responses/Chat 工具格式）。仅对官方直连地址生效，不影响第三方中转。',
         basicSettings: '基础设置',
         addPlatform: '添加平台',
         noPlatforms: '点击"添加平台"开始配置渠道',

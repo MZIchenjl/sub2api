@@ -73,10 +73,23 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 		billingModel,
 	)
 
+	targetURL, err := s.nativeAnthropicTargetURL(account)
+	if err != nil {
+		return nil, err
+	}
+
 	// 与 Anthropic 平台 passthrough 相同的 pre-filter：剥离空文本块与上游
-	// 无法接受的 web-search 历史块（GLM/Kimi/DeepSeek 对 server_tool_use 400）。
+	// 无法接受的 web-search 历史块（GLM/Kimi/非官方 DeepSeek 对 server_tool_use 400）。
+	// 开启 DeepSeek 官方联网搜索且目标为官方 api.deepseek.com 时，保留官方真实
+	// server_tool_use / web_search_tool_result 历史块（仅剥离模拟伪造块），
+	// 并对工具声明去重防止互斥 400。
 	body = StripEmptyTextBlocks(body)
-	body = FilterWebSearchHistoryBlocks(body, upstreamModel)
+	if s.isDeepSeekOfficialWebSearchEnabled(ctx, c, account, targetURL) {
+		body = FilterEmulatedWebSearchHistoryBlocks(body)
+		body = adaptDeepSeekAnthropicWebSearchTools(body)
+	} else {
+		body = FilterWebSearchHistoryBlocks(body, upstreamModel)
+	}
 
 	// thinking 模式下 DeepSeek 要求工具续接历史回传 thinking 块；缺失时上游
 	// 自动恢复失败会返回 400。仅对 DeepSeek 官方账号、thinking 启用时生效。
@@ -90,10 +103,6 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 	apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if apiKey == "" {
 		return nil, fmt.Errorf("account %d missing api_key", account.ID)
-	}
-	targetURL, err := s.nativeAnthropicTargetURL(account)
-	if err != nil {
-		return nil, err
 	}
 
 	proxyURL := ""

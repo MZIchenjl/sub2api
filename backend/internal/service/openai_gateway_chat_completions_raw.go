@@ -199,6 +199,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 	if err != nil {
 		return nil, err
 	}
+	if s.isDeepSeekOfficialWebSearchEnabled(ctx, c, account, targetURL) {
+		upstreamBody = adaptDeepSeekChatWebSearchTools(upstreamBody)
+	}
 	upstreamBody, err = normalizeStrictChatDeveloperRoles(account, targetURL, upstreamBody)
 	if err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())

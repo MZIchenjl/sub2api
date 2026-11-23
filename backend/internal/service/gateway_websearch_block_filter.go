@@ -44,11 +44,21 @@ var (
 // empty gets a placeholder text block (mirroring FilterThinkingBlocksForRetry).
 // Returns the original body unchanged when nothing needs stripping.
 func FilterWebSearchHistoryBlocks(body []byte, mappedModel string) []byte {
+	return filterWebSearchHistoryBlocks(body, ResolveThinkingProtocol(mappedModel) == ThinkingProtocolPassbackRequired)
+}
+
+// FilterEmulatedWebSearchHistoryBlocks strips only locally synthesized
+// web-search emulation blocks (srvtoolu_ws_*) while preserving genuine
+// upstream server_tool_use / web_search_tool_result blocks for multi-turn
+// passback (e.g. DeepSeek official Anthropic web tools).
+func FilterEmulatedWebSearchHistoryBlocks(body []byte) []byte {
+	return filterWebSearchHistoryBlocks(body, false)
+}
+
+func filterWebSearchHistoryBlocks(body []byte, stripAll bool) []byte {
 	if !bytes.Contains(body, patternServerToolUse) && !bytes.Contains(body, patternWebSearchToolResult) {
 		return body
 	}
-
-	stripAll := ResolveThinkingProtocol(mappedModel) == ThinkingProtocolPassbackRequired
 
 	jsonStr := *(*string)(unsafe.Pointer(&body))
 	msgsRes := gjson.Get(jsonStr, "messages")

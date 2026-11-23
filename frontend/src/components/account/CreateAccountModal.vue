@@ -3632,6 +3632,26 @@
         </div>
       </div>
 
+      <!-- DeepSeek Official Web Search (DeepSeek API Key or OpenAI API Key targeting api.deepseek.com) -->
+      <div
+        v-if="showDeepSeekWebSearchOption"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.deepseek.webSearch') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.deepseek.webSearchDesc') }}
+            </p>
+          </div>
+          <select v-model="deepseekWebSearchMode" data-testid="deepseek-web-search-mode" class="input w-40 text-sm">
+            <option value="default">{{ t('admin.accounts.deepseek.webSearchDefault') }}</option>
+            <option value="enabled">{{ t('admin.accounts.deepseek.webSearchEnabled') }}</option>
+            <option value="disabled">{{ t('admin.accounts.deepseek.webSearchDisabled') }}</option>
+          </select>
+        </div>
+      </div>
+
       <!-- OpenAI API 长上下文计费开关 -->
       <div
         v-if="form.platform === 'openai' && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
@@ -4980,6 +5000,21 @@ type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
+const deepseekWebSearchMode = ref<'default' | 'enabled' | 'disabled'>('default')
+
+const isOfficialDeepSeekHost = (rawUrl: string): boolean => {
+  try {
+    return new URL(rawUrl.trim()).hostname.toLowerCase() === 'api.deepseek.com'
+  } catch {
+    return false
+  }
+}
+
+const showDeepSeekWebSearchOption = computed(() => {
+  if (accountCategory.value !== 'apikey') return false
+  if (form.platform === 'deepseek') return true
+  return form.platform === 'openai' && isOfficialDeepSeekHost(apiKeyBaseUrl.value)
+})
 const webSearchGlobalEnabled = ref(false)
 
 const toggleOpenAILongContextBilling = () => {
@@ -5492,6 +5527,9 @@ watch(
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
+    if (newPlatform !== 'deepseek' && newPlatform !== 'openai') {
+      deepseekWebSearchMode.value = 'default'
+    }
     // 请求头覆写为平台相关配置（常用头集合不同），切换平台时清空，
     // 避免上一平台的配置行被提交到新平台账号
     headerOverrideEnabled.value = false
@@ -5526,6 +5564,9 @@ watch(
       anthropicPassthroughEnabled.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
+    }
+    if ((platform !== 'deepseek' && platform !== 'openai') || category !== 'apikey') {
+      deepseekWebSearchMode.value = 'default'
     }
   }
 )
@@ -5959,6 +6000,7 @@ const resetForm = () => {
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
+  deepseekWebSearchMode.value = 'default'
   // Reset quota control state
   windowCostEnabled.value = false
   windowCostLimit.value = null
@@ -6131,6 +6173,19 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
     extra.web_search_emulation = webSearchEmulationMode.value
   }
 
+  return Object.keys(extra).length > 0 ? extra : undefined
+}
+
+const buildDeepSeekExtra = (base?: Record<string, unknown>): Record<string, unknown> | undefined => {
+  if (!showDeepSeekWebSearchOption.value) {
+    return base
+  }
+  const extra: Record<string, unknown> = { ...(base || {}) }
+  if (deepseekWebSearchMode.value === 'default') {
+    delete extra.deepseek_web_search
+  } else {
+    extra.deepseek_web_search = deepseekWebSearchMode.value
+  }
   return Object.keys(extra).length > 0 ? extra : undefined
 }
 
@@ -6507,7 +6562,7 @@ const handleSubmit = async () => {
   }
 
   form.credentials = credentials
-  const extra = buildAnthropicExtra(buildOpenAIExtra())
+  const extra = buildDeepSeekExtra(buildAnthropicExtra(buildOpenAIExtra()))
 
   await doCreateAccount({
     ...form,

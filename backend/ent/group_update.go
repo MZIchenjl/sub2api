@@ -1051,6 +1051,20 @@ func (_u *GroupUpdate) SetNillableFreeOpenaiFast(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetDeepseekWebSearchMode sets the "deepseek_web_search_mode" field.
+func (_u *GroupUpdate) SetDeepseekWebSearchMode(v string) *GroupUpdate {
+	_u.mutation.SetDeepseekWebSearchMode(v)
+	return _u
+}
+
+// SetNillableDeepseekWebSearchMode sets the "deepseek_web_search_mode" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableDeepseekWebSearchMode(v *string) *GroupUpdate {
+	if v != nil {
+		_u.SetDeepseekWebSearchMode(*v)
+	}
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdate) SetRequireOauthOnly(v bool) *GroupUpdate {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -1567,6 +1581,11 @@ func (_u *GroupUpdate) check() error {
 			return &ValidationError{Name: "audio_stt_price_per_hour", err: fmt.Errorf(`ent: validator failed for field "Group.audio_stt_price_per_hour": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.DeepseekWebSearchMode(); ok {
+		if err := group.DeepseekWebSearchModeValidator(v); err != nil {
+			return &ValidationError{Name: "deepseek_web_search_mode", err: fmt.Errorf(`ent: validator failed for field "Group.deepseek_web_search_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.DefaultMappedModel(); ok {
 		if err := group.DefaultMappedModelValidator(v); err != nil {
 			return &ValidationError{Name: "default_mapped_model", err: fmt.Errorf(`ent: validator failed for field "Group.default_mapped_model": %w`, err)}
@@ -1906,6 +1925,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.DeepseekWebSearchMode(); ok {
+		_spec.SetField(group.FieldDeepseekWebSearchMode, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -3288,6 +3310,20 @@ func (_u *GroupUpdateOne) SetNillableFreeOpenaiFast(v *bool) *GroupUpdateOne {
 	return _u
 }
 
+// SetDeepseekWebSearchMode sets the "deepseek_web_search_mode" field.
+func (_u *GroupUpdateOne) SetDeepseekWebSearchMode(v string) *GroupUpdateOne {
+	_u.mutation.SetDeepseekWebSearchMode(v)
+	return _u
+}
+
+// SetNillableDeepseekWebSearchMode sets the "deepseek_web_search_mode" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableDeepseekWebSearchMode(v *string) *GroupUpdateOne {
+	if v != nil {
+		_u.SetDeepseekWebSearchMode(*v)
+	}
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdateOne) SetRequireOauthOnly(v bool) *GroupUpdateOne {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -3817,6 +3853,11 @@ func (_u *GroupUpdateOne) check() error {
 			return &ValidationError{Name: "audio_stt_price_per_hour", err: fmt.Errorf(`ent: validator failed for field "Group.audio_stt_price_per_hour": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.DeepseekWebSearchMode(); ok {
+		if err := group.DeepseekWebSearchModeValidator(v); err != nil {
+			return &ValidationError{Name: "deepseek_web_search_mode", err: fmt.Errorf(`ent: validator failed for field "Group.deepseek_web_search_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.DefaultMappedModel(); ok {
 		if err := group.DefaultMappedModelValidator(v); err != nil {
 			return &ValidationError{Name: "default_mapped_model", err: fmt.Errorf(`ent: validator failed for field "Group.default_mapped_model": %w`, err)}
@@ -4173,6 +4214,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.DeepseekWebSearchMode(); ok {
+		_spec.SetField(group.FieldDeepseekWebSearchMode, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
