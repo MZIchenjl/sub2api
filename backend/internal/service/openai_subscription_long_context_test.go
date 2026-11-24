@@ -60,11 +60,12 @@ func TestOpenAIGatewayServiceRecordUsage_GPT61SolSubscriptionLongContext(t *test
 							svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
 							if catalog {
 								svc.billingService = NewBillingService(svc.cfg, newStubPricingServiceFromJSON(t, `{
-									"gpt-6.1-sol": {"litellm_provider": "openai", "mode": "chat",
-									"input_cost_per_token": 2e-6, "output_cost_per_token": 10e-6,
-									"cache_read_input_token_cost": 0.1e-6, "cache_creation_input_token_cost": 2.5e-6,
-									"input_cost_per_token_above_272k_tokens": 4e-6,
-									"output_cost_per_token_above_272k_tokens": 15e-6}
+									"openai": {"id": "openai", "name": "OpenAI", "models": {
+										"gpt-6.1-sol": {"id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "cost": {
+											"input": 2, "output": 10, "cache_read": 0.1, "cache_write": 2.5,
+											"tiers": [{"input": 4, "output": 15, "tier": {"type": "context", "size": 272000}}]
+										}}
+									}}
 								}`))
 							}
 							apiKey := &APIKey{ID: 1}

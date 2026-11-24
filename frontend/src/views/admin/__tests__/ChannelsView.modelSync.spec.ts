@@ -122,7 +122,7 @@ describe('ChannelsView pricing model sync', () => {
 
     setPlatformCatalog({
       ...BUILTIN_PLATFORM_CATALOG,
-      platforms: [...BUILTIN_PLATFORM_CATALOG.platforms, { ...platform, litellm_provider: 'acme' }]
+      platforms: [...BUILTIN_PLATFORM_CATALOG.platforms, { ...platform, models_dev_provider: 'acme' }]
     })
     await flushPromises()
     expect(visibleSyncButtons(wrapper)).toHaveLength(1)

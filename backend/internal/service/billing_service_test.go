@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"log"
 	"math"
-	"os"
 	"strings"
 	"testing"
 

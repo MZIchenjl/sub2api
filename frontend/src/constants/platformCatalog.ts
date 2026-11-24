@@ -43,7 +43,7 @@ export interface PlatformSpec {
   display_name: string
   gateway: PlatformGateway
   cn_provider: boolean
-  litellm_provider?: string
+  models_dev_provider?: string
   multi_protocol?: ProviderProfileInfo
 }
 
@@ -94,7 +94,7 @@ export function supportsUpstreamModelSync(platform: string | null | undefined): 
 
 /** 清单中声明了定价目录 provider 的平台才支持同步定价模型。 */
 export function supportsPricingModelSync(platform: string | null | undefined): boolean {
-  return !!getPlatformSpec(platform?.trim().toLowerCase())?.litellm_provider?.trim()
+  return !!getPlatformSpec(platform?.trim().toLowerCase())?.models_dev_provider?.trim()
 }
 
 /** 平台展示名；未登记的值原样返回。 */

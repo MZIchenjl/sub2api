@@ -144,7 +144,7 @@ func TestPricingStartupBackgroundSyncUpdatesCache(t *testing.T) {
 
 	saved, err := os.ReadFile(svc.getCatalogCachePath())
 	require.NoError(t, err)
-	require.Equal(t, updatedJSON, string(saved))
+	require.JSONEq(t, updatedJSON, string(saved))
 }
 
 // 同步失败时保留已有本地缓存并记录错误状态。

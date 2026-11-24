@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -36,12 +37,12 @@ const (
 	SettingKeyModelPricingSyncMeta   = "model_pricing_sync_meta"
 	SettingKeyModelPricingOverrides  = "model_pricing_overrides"
 
-	PricingSelectionModeProvider = "provider"
-	PricingSelectionModeCustom   = "custom"
-
 	PricingSyncStatusNever   = "never"
 	PricingSyncStatusSuccess = "success"
 	PricingSyncStatusFailed  = "failed"
+
+	PricingSyncOverwriteSkipLocked = "skip_locked"
+	PricingSyncOverwriteAll        = "overwrite_all"
 
 	tokensPerMillion = 1_000_000.0
 )
@@ -94,24 +95,220 @@ type PricingRemoteClient interface {
 	FetchPricingJSON(ctx context.Context, url string) ([]byte, error)
 }
 
+// --- Supported system provider specs (only sync models supported by sub2api) ---
+
+type supportedModelsDevProviderSpec struct {
+	ProviderID   string
+	Platform     string // primary sub2api platform ID
+	ChannelLabel string // display name for account-type matched channel
+	IsDefault    bool   // first-party default channel for Platform
+	IsAggregator bool   // multi-vendor aggregator platform (opencode_go / command_code / cline)
+	ModelFilter  func(origID string, raw modelsDevRawModel) bool
+}
+
+var openCodeGoKnownModelSet = func() map[string]struct{} {
+	ids := DefaultOpenCodeGoModelIDs()
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[strings.ToLower(strings.TrimSpace(id))] = struct{}{}
+	}
+	return set
+}()
+
+func hasPositiveTokenCost(raw modelsDevRawModel) bool {
+	if raw.Cost == nil {
+		return false
+	}
+	if raw.Cost.Input != nil && *raw.Cost.Input > 0 {
+		return true
+	}
+	if raw.Cost.Output != nil && *raw.Cost.Output > 0 {
+		return true
+	}
+	return false
+}
+
+func isClaudeCatalogModelID(origID string, _ modelsDevRawModel) bool {
+	return strings.HasPrefix(origID, "claude-")
+}
+
+func isGeminiCatalogModelID(origID string, _ modelsDevRawModel) bool {
+	return strings.HasPrefix(origID, "gemini-") ||
+		strings.HasPrefix(origID, "imagen-") ||
+		strings.HasPrefix(origID, "veo-") ||
+		strings.HasPrefix(origID, "deep-research-")
+}
+
+func isOpenCodeSupportedModel(origID string, raw modelsDevRawModel) bool {
+	if _, ok := openCodeGoKnownModelSet[origID]; ok {
+		return true
+	}
+	return hasPositiveTokenCost(raw) && !strings.HasSuffix(strings.ToLower(strings.TrimSpace(raw.ID)), "-free")
+}
+
+func isPaidAggregatorModel(_ string, raw modelsDevRawModel) bool {
+	return hasPositiveTokenCost(raw)
+}
+
+// supportedModelsDevProviders defines the exact models.dev providers relevant to sub2api's
+// registered platforms and account types. All other 300+ unrelated providers are ignored during sync.
+var supportedModelsDevProviders = []supportedModelsDevProviderSpec{
+	// Anthropic (OAuth / Setup-Token / API Key / Upstream + Bedrock + Vertex AI Anthropic)
+	{ProviderID: "anthropic", Platform: PlatformAnthropic, ChannelLabel: "Anthropic", IsDefault: true, ModelFilter: isClaudeCatalogModelID},
+	{ProviderID: "amazon-bedrock", Platform: PlatformAnthropic, ChannelLabel: "AWS Bedrock", IsDefault: false, ModelFilter: isClaudeCatalogModelID},
+	{ProviderID: "google-vertex-anthropic", Platform: PlatformAnthropic, ChannelLabel: "Vertex AI (Anthropic)", IsDefault: false, ModelFilter: isClaudeCatalogModelID},
+
+	// OpenAI (OAuth / API Key / Upstream)
+	{ProviderID: "openai", Platform: PlatformOpenAI, ChannelLabel: "OpenAI", IsDefault: true},
+
+	// Gemini (OAuth / API Key / Upstream + Vertex AI Gemini)
+	{ProviderID: "google", Platform: PlatformGemini, ChannelLabel: "Google AI", IsDefault: true, ModelFilter: isGeminiCatalogModelID},
+	{ProviderID: "google-vertex", Platform: PlatformGemini, ChannelLabel: "Vertex AI (Gemini)", IsDefault: false, ModelFilter: isGeminiCatalogModelID},
+
+	// Grok (xAI)
+	{ProviderID: "xai", Platform: PlatformGrok, ChannelLabel: "xAI", IsDefault: true},
+
+	// Kimi (Moonshot PayG + CN + Coding Plan)
+	{ProviderID: "moonshotai", Platform: PlatformKimi, ChannelLabel: "Moonshot", IsDefault: true},
+	{ProviderID: "moonshotai-cn", Platform: PlatformKimi, ChannelLabel: "Moonshot CN", IsDefault: false},
+	{ProviderID: "kimi-code-plan-global", Platform: PlatformKimi, ChannelLabel: "Kimi Coding Plan", IsDefault: false},
+	{ProviderID: "kimi-code-plan-cn", Platform: PlatformKimi, ChannelLabel: "Kimi Coding Plan (CN)", IsDefault: false},
+
+	// Zhipu GLM (Zhipu PayG + Z.AI + Coding Plan)
+	{ProviderID: "zhipuai", Platform: PlatformZhipu, ChannelLabel: "Zhipu AI", IsDefault: true},
+	{ProviderID: "zai", Platform: PlatformZhipu, ChannelLabel: "Z.AI", IsDefault: false},
+	{ProviderID: "zhipuai-coding-plan", Platform: PlatformZhipu, ChannelLabel: "Zhipu Coding Plan", IsDefault: false},
+	{ProviderID: "zai-coding-plan", Platform: PlatformZhipu, ChannelLabel: "Z.AI Coding Plan", IsDefault: false},
+
+	// DeepSeek
+	{ProviderID: "deepseek", Platform: PlatformDeepseek, ChannelLabel: "DeepSeek", IsDefault: true},
+
+	// MiniMax (PayG + CN + Coding Plan)
+	{ProviderID: "minimax", Platform: PlatformMiniMax, ChannelLabel: "MiniMax", IsDefault: true},
+	{ProviderID: "minimax-cn", Platform: PlatformMiniMax, ChannelLabel: "MiniMax CN", IsDefault: false},
+	{ProviderID: "minimax-coding-plan", Platform: PlatformMiniMax, ChannelLabel: "MiniMax Coding Plan", IsDefault: false},
+	{ProviderID: "minimax-cn-coding-plan", Platform: PlatformMiniMax, ChannelLabel: "MiniMax Coding Plan (CN)", IsDefault: false},
+
+	// Multi-model registered sub2api platforms
+	{ProviderID: "opencode-go", Platform: PlatformOpenCodeGo, ChannelLabel: "OpenCode Go", IsDefault: true, IsAggregator: true, ModelFilter: isOpenCodeSupportedModel},
+	{ProviderID: "commandcode", Platform: PlatformCommandCode, ChannelLabel: "Command Code", IsDefault: true, IsAggregator: true, ModelFilter: isPaidAggregatorModel},
+	{ProviderID: "cline-pass", Platform: PlatformCline, ChannelLabel: "Cline", IsDefault: true, IsAggregator: true, ModelFilter: isPaidAggregatorModel},
+	{ProviderID: "typesafe", Platform: PlatformTypeSafe, ChannelLabel: "TypeSafe", IsDefault: true},
+}
+
+var supportedModelsDevProviderMap = func() map[string]supportedModelsDevProviderSpec {
+	m := make(map[string]supportedModelsDevProviderSpec, len(supportedModelsDevProviders))
+	for _, spec := range supportedModelsDevProviders {
+		m[spec.ProviderID] = spec
+	}
+	return m
+}()
+
+// ResolveAccountPricingProvider automatically maps an Account (platform + account type +
+// coding plan / CN host) to its corresponding models.dev channel ID.
+func ResolveAccountPricingProvider(account *Account, model string) string {
+	if account == nil {
+		return ""
+	}
+	switch account.Platform {
+	case PlatformAnthropic:
+		if account.IsBedrock() {
+			return "amazon-bedrock"
+		}
+		if account.IsVertexServiceAccount() {
+			return "google-vertex-anthropic"
+		}
+		return "anthropic"
+	case PlatformOpenAI:
+		return "openai"
+	case PlatformGemini:
+		if account.IsVertexServiceAccount() {
+			return "google-vertex"
+		}
+		return "google"
+	case PlatformAntigravity:
+		modelLower := strings.ToLower(strings.TrimSpace(model))
+		if strings.Contains(modelLower, "gemini") || strings.Contains(modelLower, "imagen") {
+			return "google"
+		}
+		return "anthropic"
+	case PlatformGrok:
+		return "xai"
+	case PlatformDeepseek:
+		return "deepseek"
+	case PlatformKimi:
+		baseURL := strings.ToLower(strings.TrimSpace(account.GetOpenAIFormatBaseURL()))
+		isCN := strings.Contains(baseURL, "moonshot.cn") || strings.Contains(baseURL, "kimi.com")
+		if account.IsCodingPlan() {
+			if isCN {
+				return "kimi-code-plan-cn"
+			}
+			return "kimi-code-plan-global"
+		}
+		if isCN {
+			return "moonshotai-cn"
+		}
+		return "moonshotai"
+	case PlatformZhipu:
+		baseURL := strings.ToLower(strings.TrimSpace(account.GetOpenAIFormatBaseURL()))
+		isZAI := strings.Contains(baseURL, "z.ai")
+		if account.IsCodingPlan() {
+			if isZAI {
+				return "zai-coding-plan"
+			}
+			return "zhipuai-coding-plan"
+		}
+		if isZAI {
+			return "zai"
+		}
+		return "zhipuai"
+	case PlatformMiniMax:
+		baseURL := strings.ToLower(strings.TrimSpace(account.GetOpenAIFormatBaseURL()))
+		isCN := strings.Contains(baseURL, "minimaxi.com") || strings.Contains(baseURL, "minimax.cn")
+		if account.IsCodingPlan() {
+			if isCN {
+				return "minimax-cn-coding-plan"
+			}
+			return "minimax-coding-plan"
+		}
+		if isCN {
+			return "minimax-cn"
+		}
+		return "minimax"
+	case PlatformOpenCodeGo:
+		return "opencode-go"
+	case PlatformCommandCode:
+		return "commandcode"
+	case PlatformCline:
+		return "cline-pass"
+	case PlatformTypeSafe:
+		return "typesafe"
+	default:
+		if spec, ok := domain.LookupPlatform(account.Platform); ok && spec.ModelsDevProvider != "" {
+			return spec.ModelsDevProvider
+		}
+		return ""
+	}
+}
+
 // --- models.dev raw API JSON structures ---
 
 type modelsDevRawProvider struct {
 	ID     string                       `json:"id"`
 	Name   string                       `json:"name"`
-	API    string                       `json:"api"`
+	API    string                       `json:"api,omitempty"`
 	Models map[string]modelsDevRawModel `json:"models"`
 }
 
 type modelsDevRawModalities struct {
-	Input  []string `json:"input"`
-	Output []string `json:"output"`
+	Input  []string `json:"input,omitempty"`
+	Output []string `json:"output,omitempty"`
 }
 
 type modelsDevRawLimit struct {
-	Context int `json:"context"`
-	Input   int `json:"input"`
-	Output  int `json:"output"`
+	Context int `json:"context,omitempty"`
+	Input   int `json:"input,omitempty"`
+	Output  int `json:"output,omitempty"`
 }
 
 type modelsDevRawCostTierSpec struct {
@@ -120,42 +317,42 @@ type modelsDevRawCostTierSpec struct {
 }
 
 type modelsDevRawCostTier struct {
-	Input      *float64                  `json:"input"`
-	Output     *float64                  `json:"output"`
-	CacheRead  *float64                  `json:"cache_read"`
-	CacheWrite *float64                  `json:"cache_write"`
-	Tier       *modelsDevRawCostTierSpec `json:"tier"`
+	Input      *float64                  `json:"input,omitempty"`
+	Output     *float64                  `json:"output,omitempty"`
+	CacheRead  *float64                  `json:"cache_read,omitempty"`
+	CacheWrite *float64                  `json:"cache_write,omitempty"`
+	Tier       *modelsDevRawCostTierSpec `json:"tier,omitempty"`
 }
 
 type modelsDevRawContextOver200k struct {
-	Input      *float64 `json:"input"`
-	Output     *float64 `json:"output"`
-	CacheRead  *float64 `json:"cache_read"`
-	CacheWrite *float64 `json:"cache_write"`
+	Input      *float64 `json:"input,omitempty"`
+	Output     *float64 `json:"output,omitempty"`
+	CacheRead  *float64 `json:"cache_read,omitempty"`
+	CacheWrite *float64 `json:"cache_write,omitempty"`
 }
 
 type modelsDevRawCost struct {
-	Input           *float64                     `json:"input"`
-	Output          *float64                     `json:"output"`
-	CacheRead       *float64                     `json:"cache_read"`
-	CacheWrite      *float64                     `json:"cache_write"`
-	Reasoning       *float64                     `json:"reasoning"`
-	InputAudio      *float64                     `json:"input_audio"`
-	OutputAudio     *float64                     `json:"output_audio"`
-	Tiers           []modelsDevRawCostTier       `json:"tiers"`
-	ContextOver200k *modelsDevRawContextOver200k `json:"context_over_200k"`
+	Input           *float64                     `json:"input,omitempty"`
+	Output          *float64                     `json:"output,omitempty"`
+	CacheRead       *float64                     `json:"cache_read,omitempty"`
+	CacheWrite      *float64                     `json:"cache_write,omitempty"`
+	Reasoning       *float64                     `json:"reasoning,omitempty"`
+	InputAudio      *float64                     `json:"input_audio,omitempty"`
+	OutputAudio     *float64                     `json:"output_audio,omitempty"`
+	Tiers           []modelsDevRawCostTier       `json:"tiers,omitempty"`
+	ContextOver200k *modelsDevRawContextOver200k `json:"context_over_200k,omitempty"`
 }
 
 type modelsDevRawModel struct {
 	ID               string                  `json:"id"`
-	Name             string                  `json:"name"`
-	Family           string                  `json:"family"`
-	ReleaseDate      string                  `json:"release_date"`
-	Status           string                  `json:"status"`
-	CanonicalModelID string                  `json:"canonical_model_id"`
-	Modalities       *modelsDevRawModalities `json:"modalities"`
-	Limit            *modelsDevRawLimit      `json:"limit"`
-	Cost             *modelsDevRawCost       `json:"cost"`
+	Name             string                  `json:"name,omitempty"`
+	Family           string                  `json:"family,omitempty"`
+	ReleaseDate      string                  `json:"release_date,omitempty"`
+	Status           string                  `json:"status,omitempty"`
+	CanonicalModelID string                  `json:"canonical_model_id,omitempty"`
+	Modalities       *modelsDevRawModalities `json:"modalities,omitempty"`
+	Limit            *modelsDevRawLimit      `json:"limit,omitempty"`
+	Cost             *modelsDevRawCost       `json:"cost,omitempty"`
 }
 
 // --- Public DTOs & Store structures ---
@@ -167,27 +364,32 @@ type PricingSyncConfig struct {
 	ModelsDevURL      string `json:"models_dev_url"`
 }
 
-// PricingSyncMetadata records the latest models.dev sync result and cache stats.
+// PricingSyncMetadata records the latest models.dev sync result and filtered cache stats.
 type PricingSyncMetadata struct {
-	LastSyncAt      *time.Time `json:"last_sync_at,omitempty"`
-	LastSyncStatus  string     `json:"last_sync_status"`
-	LastSyncError   string     `json:"last_sync_error,omitempty"`
-	CacheHash       string     `json:"cache_hash,omitempty"`
-	ProviderCount   int        `json:"provider_count"`
-	ModelGroupCount int        `json:"model_group_count"`
-	RawEntryCount   int        `json:"raw_entry_count"`
+	LastSyncAt           *time.Time `json:"last_sync_at,omitempty"`
+	LastSyncStatus       string     `json:"last_sync_status"`
+	LastSyncError        string     `json:"last_sync_error,omitempty"`
+	CacheHash            string     `json:"cache_hash,omitempty"`
+	ChannelCount         int        `json:"channel_count"`
+	ModelCount           int        `json:"model_count"`
+	RawEntryCount        int        `json:"raw_entry_count"`
+	LastSkippedLocked    int        `json:"last_skipped_locked,omitempty"`
+	LastOverwrittenCount int        `json:"last_overwritten_count,omitempty"`
 }
 
-// PricingSyncStatus aggregates sync config, metadata, and override summaries for the admin UI.
+// PricingSyncStatus aggregates sync config, metadata, and override/lock counts for the admin UI.
 type PricingSyncStatus struct {
 	Config               PricingSyncConfig   `json:"config"`
 	Meta                 PricingSyncMetadata `json:"meta"`
 	DefaultOverrideCount int                 `json:"default_override_count"`
+	ChannelOverrideCount int                 `json:"channel_override_count"`
+	LockedChannelCount   int                 `json:"locked_channel_count"`
+	UnlockedCustomCount  int                 `json:"unlocked_custom_count"`
 	GroupOverrideCounts  map[string]int      `json:"group_override_counts"`
 	CacheLoaded          bool                `json:"cache_loaded"`
 }
 
-// TokenPricingPerMillion represents human-friendly USD per 1M token prices (aligned with models.dev & cc-switch).
+// TokenPricingPerMillion represents human-friendly USD per 1M token prices.
 type TokenPricingPerMillion struct {
 	DisplayName                   string   `json:"display_name,omitempty"`
 	InputPerMillion               float64  `json:"input_per_million"`
@@ -201,116 +403,137 @@ type TokenPricingPerMillion struct {
 	LongContextOutputMult         float64  `json:"long_context_output_multiplier,omitempty"`
 }
 
-// ModelPricingSelection represents an admin's active cached provider selection or custom override for a model.
-type ModelPricingSelection struct {
-	Mode         string                  `json:"mode"` // "provider" | "custom"
-	CandidateKey string                  `json:"candidate_key,omitempty"`
-	ProviderID   string                  `json:"provider_id,omitempty"`
-	RawModelID   string                  `json:"raw_model_id,omitempty"`
-	Custom       *TokenPricingPerMillion `json:"custom,omitempty"`
-	UpdatedAt    time.Time               `json:"updated_at"`
+// ModelPricingOverride stores a custom price override or locked price snapshot
+// in Default, Account-Type Channel, or System Group scope.
+type ModelPricingOverride struct {
+	Platform  string                 `json:"platform,omitempty"`
+	Custom    TokenPricingPerMillion `json:"custom"`
+	Locked    bool                   `json:"locked,omitempty"`
+	IsCustom  bool                   `json:"is_custom,omitempty"`
+	UpdatedAt time.Time              `json:"updated_at"`
 }
 
-// PricingOverridesState persists default and per-group selections/overrides.
+// PricingOverridesState persists global default edits/locks, per-channel edits/locks,
+// and per-system-group independent pricing overrides.
 type PricingOverridesState struct {
-	Default map[string]ModelPricingSelection            `json:"default"`
-	Groups  map[string]map[string]ModelPricingSelection `json:"groups"`
+	Default  map[string]ModelPricingOverride            `json:"default"`
+	Channels map[string]map[string]ModelPricingOverride `json:"channels,omitempty"`
+	Groups   map[string]map[string]ModelPricingOverride `json:"groups"`
 }
 
-// ModelsDevCandidate represents one cached provider pricing entry under an original model ID.
-type ModelsDevCandidate struct {
-	CandidateKey  string                 `json:"candidate_key"`
-	ProviderID    string                 `json:"provider_id"`
-	ProviderName  string                 `json:"provider_name"`
-	RawModelID    string                 `json:"raw_model_id"`
-	DisplayName   string                 `json:"display_name"`
-	Family        string                 `json:"family,omitempty"`
-	ReleaseDate   string                 `json:"release_date,omitempty"`
-	Status        string                 `json:"status,omitempty"`
-	ContextLimit  int                    `json:"context_limit,omitempty"`
-	OutputLimit   int                    `json:"output_limit,omitempty"`
-	IsRecommended bool                   `json:"is_recommended"`
-	Pricing       TokenPricingPerMillion `json:"pricing"`
+// UpsertPricingOverrideInput defines parameters for editing pricing at Default, Channel, or Group scope.
+type UpsertPricingOverrideInput struct {
+	GroupID   *int64
+	ChannelID string
+	ModelID   string
+	Platform  string
+	Custom    TokenPricingPerMillion
+	Locked    *bool
+}
+
+// AccountChannelPriceEntry represents one account-type matched channel price cached from models.dev
+// (with any custom edit and/or sync lock applied).
+type AccountChannelPriceEntry struct {
+	ChannelID     string                  `json:"channel_id"`
+	ChannelName   string                  `json:"channel_name"`
+	Platform      string                  `json:"platform"`
+	RawModelID    string                  `json:"raw_model_id"`
+	IsDefault     bool                    `json:"is_default"`
+	IsOverridden  bool                    `json:"is_overridden"`
+	IsLocked      bool                    `json:"is_locked"`
+	Pricing       TokenPricingPerMillion  `json:"pricing"`
+	SyncedPricing *TokenPricingPerMillion `json:"synced_pricing,omitempty"`
+	UpdatedAt     *time.Time              `json:"updated_at,omitempty"`
 	catalog       *CatalogModelPricing
 	score         int
 }
 
-// ModelsDevModelGroup groups all cached models.dev entries sharing the same original model ID.
-type ModelsDevModelGroup struct {
-	ModelID             string
-	DisplayName         string
-	Family              string
-	ReleaseDate         string
-	DefaultCandidateKey string
-	Candidates          []ModelsDevCandidate
-	candidatesByKey     map[string]*ModelsDevCandidate
+// SupportedModelEntry holds all cached channel prices for one system-supported model ID.
+type SupportedModelEntry struct {
+	ModelID            string
+	DisplayName        string
+	Family             string
+	ReleaseDate        string
+	Platform           string   // primary system platform (anthropic / openai / gemini / grok / kimi / zhipu / deepseek / minimax / opencode_go / command_code / cline / typesafe)
+	Platforms          []string // all system platforms that support this model (including antigravity for claude/gemini)
+	DefaultChannelID   string
+	DefaultChannelName string
+	DefaultPricing     TokenPricingPerMillion
+	defaultCatalog     *CatalogModelPricing
+	Channels           []AccountChannelPriceEntry
+	channelByID        map[string]*AccountChannelPriceEntry
+	rawByChannel       map[string]map[string]*CatalogModelPricing // channelID -> lower(rawModelID) -> catalog
 }
 
-// ModelsDevProviderSummary summarizes a provider available in the models.dev cache.
-type ModelsDevProviderSummary struct {
+// SupportedPlatformSummary summarizes available system platforms in the pricing catalog.
+type SupportedPlatformSummary struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	ModelCount int    `json:"model_count"`
 }
 
-// ModelPricingListQuery defines query filters for listing grouped model pricing.
+// ModelPricingListQuery defines query filters for listing system-supported model pricing.
 type ModelPricingListQuery struct {
-	GroupID  int64
-	Search   string
-	Provider string
-	Filter   string // "all" | "overridden" | "custom" | "multi_provider"
-	Page     int
-	PageSize int
+	GroupID       int64
+	GroupPlatform string // resolved from system GroupRepository when GroupID > 0
+	Platform      string // optional platform filter (used when GroupID == 0 or composite group)
+	Search        string
+	Filter        string // "all" | "overridden" | "custom"
+	Page          int
+	PageSize      int
 }
 
-// ModelPricingListItem is one row in the admin Model Pricing table (grouped by original model ID).
+// ModelPricingListItem is one top-level model row in the admin Model Pricing multi-level table.
 type ModelPricingListItem struct {
-	ModelID            string                  `json:"model_id"`
-	DisplayName        string                  `json:"display_name"`
-	Family             string                  `json:"family,omitempty"`
-	ReleaseDate        string                  `json:"release_date,omitempty"`
-	Source             string                  `json:"source"` // "default_auto" | "default_provider" | "default_custom" | "inherited_default" | "group_provider" | "group_custom"
-	IsGroupOverridden  bool                    `json:"is_group_overridden"`
-	IsDefaultModified  bool                    `json:"is_default_modified"`
-	IsCustomOnly       bool                    `json:"is_custom_only"`
-	ActiveProviderID   string                  `json:"active_provider_id,omitempty"`
-	ActiveProviderName string                  `json:"active_provider_name,omitempty"`
-	ActiveRawModelID   string                  `json:"active_raw_model_id,omitempty"`
-	ActiveCandidateKey string                  `json:"active_candidate_key,omitempty"`
-	EffectivePricing   TokenPricingPerMillion  `json:"effective_pricing"`
-	DefaultPricing     *TokenPricingPerMillion `json:"default_pricing,omitempty"`
-	Candidates         []ModelsDevCandidate    `json:"candidates"`
-	CandidateCount     int                     `json:"candidate_count"`
-	GroupOverrideCount int                     `json:"group_override_count"`
-	UpdatedAt          *time.Time              `json:"updated_at,omitempty"`
+	ModelID              string                     `json:"model_id"`
+	DisplayName          string                     `json:"display_name"`
+	Platform             string                     `json:"platform"`
+	Platforms            []string                   `json:"platforms"`
+	Family               string                     `json:"family,omitempty"`
+	ReleaseDate          string                     `json:"release_date,omitempty"`
+	Source               string                     `json:"source"` // "default_auto" | "default_custom" | "inherited_default" | "group_custom"
+	IsGroupOverridden    bool                       `json:"is_group_overridden"`
+	IsDefaultModified    bool                       `json:"is_default_modified"`
+	IsDefaultLocked      bool                       `json:"is_default_locked"`
+	IsCustomOnly         bool                       `json:"is_custom_only"`
+	DefaultChannelID     string                     `json:"default_channel_id,omitempty"`
+	DefaultChannelName   string                     `json:"default_channel_name,omitempty"`
+	ChannelPrices        []AccountChannelPriceEntry `json:"channel_prices"`
+	EffectivePricing     TokenPricingPerMillion     `json:"effective_pricing"`
+	DefaultPricing       *TokenPricingPerMillion    `json:"default_pricing,omitempty"`
+	GroupOverrideCount   int                        `json:"group_override_count"`
+	ChannelOverrideCount int                        `json:"channel_override_count"`
+	LockedChannelCount   int                        `json:"locked_channel_count"`
+	UpdatedAt            *time.Time                 `json:"updated_at,omitempty"`
 }
 
 // ModelPricingListResult is the paginated response for listing model pricing.
 type ModelPricingListResult struct {
-	Items     []ModelPricingListItem     `json:"items"`
-	Total     int                        `json:"total"`
-	Page      int                        `json:"page"`
-	PageSize  int                        `json:"page_size"`
-	Providers []ModelsDevProviderSummary `json:"providers"`
+	Items         []ModelPricingListItem     `json:"items"`
+	Total         int                        `json:"total"`
+	Page          int                        `json:"page"`
+	PageSize      int                        `json:"page_size"`
+	GroupPlatform string                     `json:"group_platform,omitempty"`
+	Platforms     []SupportedPlatformSummary `json:"platforms"`
 }
 
-// PricingService 动态价格服务（基于 models.dev 缓存 + 原始模型 ID 分组 + 分组独立覆盖）
+// PricingService 动态价格服务（基于 models.dev 过滤缓存 + 账户类型自动匹配渠道 + 系统分组独立定价）
 type PricingService struct {
 	cfg          *config.Config
 	remoteClient PricingRemoteClient
 	settingRepo  SettingRepository
 
-	mu                    sync.RWMutex
-	syncMu                sync.Mutex
-	syncConfig            PricingSyncConfig
-	syncMeta              PricingSyncMetadata
-	overrides             PricingOverridesState
-	modelGroups           map[string]*ModelsDevModelGroup // normalized original model ID -> grouped candidates
-	providerModels        map[string][]string             // provider_id -> sorted original model IDs
-	providerSummaries     []ModelsDevProviderSummary
-	effectiveDefaultData  map[string]*CatalogModelPricing // materialized default effective catalog for hot path
-	lastUpdated           time.Time
-	localHash             string
+	mu                   sync.RWMutex
+	syncMu               sync.Mutex
+	syncConfig           PricingSyncConfig
+	syncMeta             PricingSyncMetadata
+	overrides            PricingOverridesState
+	models               map[string]*SupportedModelEntry // normalized original model ID -> system-supported model entry
+	providerModels       map[string][]string             // models.dev provider_id -> sorted original model IDs
+	platformSummaries    []SupportedPlatformSummary
+	effectiveDefaultData map[string]*CatalogModelPricing // materialized default effective catalog for hot path
+	lastUpdated          time.Time
+	localHash            string
 
 	stopCh           chan struct{}
 	schedulerResetCh chan struct{}
@@ -329,10 +552,11 @@ func NewPricingService(cfg *config.Config, remoteClient PricingRemoteClient) *Pr
 			LastSyncStatus: PricingSyncStatusNever,
 		},
 		overrides: PricingOverridesState{
-			Default: make(map[string]ModelPricingSelection),
-			Groups:  make(map[string]map[string]ModelPricingSelection),
+			Default:  make(map[string]ModelPricingOverride),
+			Channels: make(map[string]map[string]ModelPricingOverride),
+			Groups:   make(map[string]map[string]ModelPricingOverride),
 		},
-		modelGroups:          make(map[string]*ModelsDevModelGroup),
+		models:               make(map[string]*SupportedModelEntry),
 		providerModels:       make(map[string][]string),
 		effectiveDefaultData: make(map[string]*CatalogModelPricing),
 		stopCh:               make(chan struct{}),
@@ -369,7 +593,7 @@ func defaultSyncConfigFromAppConfig(cfg *config.Config) PricingSyncConfig {
 	return out
 }
 
-// Initialize 初始化价格服务：加载数据库配置与覆盖层 -> 加载本地 models.dev 缓存 -> 启动定时同步器。
+// Initialize 初始化价格服务：加载数据库配置与分组覆盖 -> 加载本地缓存 -> 启动定时同步器。
 func (s *PricingService) Initialize() error {
 	if s.cfg != nil && strings.TrimSpace(s.cfg.Pricing.DataDir) != "" {
 		if err := os.MkdirAll(s.cfg.Pricing.DataDir, 0755); err != nil {
@@ -377,10 +601,8 @@ func (s *PricingService) Initialize() error {
 		}
 	}
 
-	// 1. 从数据库加载同步配置、元数据和覆盖层（若有 settingRepo）
 	s.loadPersistedState(context.Background())
 
-	// 2. 优先加载本地 models.dev 缓存，保证启动快速可用
 	cachePath := s.getCatalogCachePath()
 	cacheLoaded := false
 	cacheStale := true
@@ -398,17 +620,14 @@ func (s *PricingService) Initialize() error {
 		}
 	}
 
-	// 3. 即使本地缓存不存在，也要先根据数据库里的自定义覆盖构建默认索引
 	s.mu.Lock()
 	s.rebuildEffectiveDefaultLocked()
 	modelCount := len(s.effectiveDefaultData)
 	autoSync := s.syncConfig.AutoSyncEnabled && strings.TrimSpace(s.syncConfig.ModelsDevURL) != ""
 	s.mu.Unlock()
 
-	// 4. 启动定时同步调度器
 	s.startUpdateScheduler()
 
-	// 5. 若启用自动同步且本地无缓存或缓存已过期，则在后台异步触发一次同步（不阻塞服务启动）
 	if autoSync && s.remoteClient != nil && (!cacheLoaded || cacheStale) {
 		s.wg.Add(1)
 		go func() {
@@ -572,10 +791,28 @@ func (s *PricingService) loadPersistedState(ctx context.Context) {
 		var ov PricingOverridesState
 		if err := json.Unmarshal([]byte(raw), &ov); err == nil {
 			if ov.Default == nil {
-				ov.Default = make(map[string]ModelPricingSelection)
+				ov.Default = make(map[string]ModelPricingOverride)
+			}
+			for id, item := range ov.Default {
+				if !item.IsCustom && !item.Locked {
+					item.IsCustom = true
+					ov.Default[id] = item
+				}
+			}
+			if ov.Channels == nil {
+				ov.Channels = make(map[string]map[string]ModelPricingOverride)
+			}
+			for chID, chMap := range ov.Channels {
+				for id, item := range chMap {
+					if !item.IsCustom && !item.Locked {
+						item.IsCustom = true
+						chMap[id] = item
+					}
+				}
+				ov.Channels[chID] = chMap
 			}
 			if ov.Groups == nil {
-				ov.Groups = make(map[string]map[string]ModelPricingSelection)
+				ov.Groups = make(map[string]map[string]ModelPricingOverride)
 			}
 			s.overrides = ov
 		}
@@ -599,7 +836,7 @@ func (s *PricingService) persistSettingJSON(ctx context.Context, key string, val
 	return repo.Set(ctx, key, string(encoded))
 }
 
-// --- Sync & Disk Cache ---
+// --- Sync & Filtered Disk Cache ---
 
 func (s *PricingService) getCatalogCachePath() string {
 	if s.cfg == nil || strings.TrimSpace(s.cfg.Pricing.DataDir) == "" {
@@ -613,33 +850,40 @@ func (s *PricingService) loadCatalogFromDisk(filePath string) error {
 	if err != nil {
 		return err
 	}
-	return s.applyModelsDevCatalogBytes(body, false)
+	_, err = s.applyModelsDevCatalogBytes(body, false)
+	return err
 }
 
-// LoadModelsDevJSON loads raw models.dev api.json bytes into memory (useful for tests & imports).
+// LoadModelsDevJSON loads models.dev JSON bytes into memory (filtered to system-supported platforms/models).
 func (s *PricingService) LoadModelsDevJSON(body []byte) error {
-	return s.applyModelsDevCatalogBytes(body, false)
+	_, err := s.applyModelsDevCatalogBytes(body, false)
+	return err
 }
 
-func (s *PricingService) applyModelsDevCatalogBytes(body []byte, updateSyncMeta bool) error {
-	groups, providerModels, providerSummaries, rawCount, err := parseModelsDevCatalog(body)
+func (s *PricingService) applyModelsDevCatalogBytes(body []byte, updateSyncMeta bool) ([]byte, error) {
+	models, providerModels, platformSummaries, filteredRaw, channelCount, rawCount, err := parseSupportedModelsDevCatalog(body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	sum := sha256.Sum256(body)
+	filteredBytes, err := json.Marshal(filteredRaw)
+	if err != nil {
+		filteredBytes = body
+	}
+
+	sum := sha256.Sum256(filteredBytes)
 	hashStr := hex.EncodeToString(sum[:])
 	now := time.Now()
 
 	s.mu.Lock()
-	s.modelGroups = groups
+	s.models = models
 	s.providerModels = providerModels
-	s.providerSummaries = providerSummaries
+	s.platformSummaries = platformSummaries
 	s.localHash = hashStr
 	s.lastUpdated = now
 	s.syncMeta.CacheHash = hashStr[:min(16, len(hashStr))]
-	s.syncMeta.ProviderCount = len(providerSummaries)
-	s.syncMeta.ModelGroupCount = len(groups)
+	s.syncMeta.ChannelCount = channelCount
+	s.syncMeta.ModelCount = len(models)
 	s.syncMeta.RawEntryCount = rawCount
 	if updateSyncMeta {
 		t := now
@@ -649,16 +893,33 @@ func (s *PricingService) applyModelsDevCatalogBytes(body []byte, updateSyncMeta 
 	}
 	s.rebuildEffectiveDefaultLocked()
 	s.mu.Unlock()
-	return nil
+	return filteredBytes, nil
 }
 
-// SyncNow immediately fetches models.dev/api.json, updates local disk cache, memory catalog, and metadata.
+// SyncNow fetches models.dev/api.json, filters to system-supported models & channels,
+// skips locked channel prices, updates unlocked entries, and persists the slim filtered cache.
 func (s *PricingService) SyncNow(ctx context.Context) (*PricingSyncStatus, error) {
+	return s.SyncNowWithMode(ctx, PricingSyncOverwriteSkipLocked)
+}
+
+// SyncNowWithMode performs a models.dev sync with explicit overwrite semantics:
+//   - "skip_locked" (default / auto-sync): keeps all locked channel prices untouched; updates unlocked entries.
+//   - "overwrite_all" (manual confirmed overwrite): overwrites all synced channel prices (including locked ones),
+//     while preserving custom-only models and system group overrides.
+func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode string) (*PricingSyncStatus, error) {
 	if s == nil {
 		return nil, errors.New("pricing service is nil")
 	}
 	if s.remoteClient == nil {
 		return nil, errors.New("pricing remote client is not configured")
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(overwriteMode))
+	if mode == "" {
+		mode = PricingSyncOverwriteSkipLocked
+	}
+	if mode != PricingSyncOverwriteSkipLocked && mode != PricingSyncOverwriteAll {
+		return nil, fmt.Errorf("invalid overwrite_mode %q (expected %q or %q)", overwriteMode, PricingSyncOverwriteSkipLocked, PricingSyncOverwriteAll)
 	}
 
 	s.syncMu.Lock()
@@ -677,7 +938,7 @@ func (s *PricingService) SyncNow(ctx context.Context) (*PricingSyncStatus, error
 		return s.GetSyncStatus(), err
 	}
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Syncing models.dev catalog from %s", validatedURL)
+	logger.LegacyPrintf("service.pricing", "[Pricing] Syncing supported models from %s (mode=%s)", validatedURL, mode)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -688,19 +949,88 @@ func (s *PricingService) SyncNow(ctx context.Context) (*PricingSyncStatus, error
 		return s.GetSyncStatus(), err
 	}
 
-	if err := s.applyModelsDevCatalogBytes(body, true); err != nil {
+	filteredBytes, err := s.applyModelsDevCatalogBytes(body, true)
+	if err != nil {
 		err = fmt.Errorf("parse models.dev catalog: %w", err)
 		s.recordSyncError(ctx, err)
 		return s.GetSyncStatus(), err
 	}
 
-	// Atomically write cache to disk
+	// Reconcile Default & Channel overrides against the freshly synced catalog according to overwrite_mode.
+	// System Group overrides (s.overrides.Groups) and custom-only models are always preserved.
+	var overridesChanged bool
+	var overridesCopy PricingOverridesState
+	s.mu.Lock()
+	skippedLocked := 0
+	overwrittenCount := 0
+
+	for modelID, ov := range s.overrides.Default {
+		if s.models[modelID] == nil {
+			// Custom-only model not in models.dev: always keep.
+			continue
+		}
+		if mode == PricingSyncOverwriteAll {
+			delete(s.overrides.Default, modelID)
+			overwrittenCount++
+			overridesChanged = true
+		} else {
+			if ov.Locked {
+				skippedLocked++
+			} else {
+				delete(s.overrides.Default, modelID)
+				overwrittenCount++
+				overridesChanged = true
+			}
+		}
+	}
+
+	for chID, chModels := range s.overrides.Channels {
+		for modelID, ov := range chModels {
+			entry := s.models[modelID]
+			if entry == nil || entry.channelByID[chID] == nil {
+				continue
+			}
+			if mode == PricingSyncOverwriteAll {
+				delete(chModels, modelID)
+				overwrittenCount++
+				overridesChanged = true
+			} else {
+				if ov.Locked {
+					skippedLocked++
+				} else {
+					delete(chModels, modelID)
+					overwrittenCount++
+					overridesChanged = true
+				}
+			}
+		}
+		if len(chModels) == 0 {
+			delete(s.overrides.Channels, chID)
+		}
+	}
+
+	s.syncMeta.LastSkippedLocked = skippedLocked
+	s.syncMeta.LastOverwrittenCount = overwrittenCount
+	if overridesChanged {
+		s.rebuildEffectiveDefaultLocked()
+		overridesCopy = clonePricingOverridesState(s.overrides)
+	}
+	metaCopy := s.syncMeta
+	s.mu.Unlock()
+
+	if overridesChanged {
+		if err := s.persistSettingJSON(ctx, SettingKeyModelPricingOverrides, overridesCopy); err != nil {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to persist reconciled overrides: %v", err)
+		}
+	}
+
+	// Atomically write slim filtered cache to disk
 	if cachePath := s.getCatalogCachePath(); cachePath != "" {
 		if mkErr := os.MkdirAll(filepath.Dir(cachePath), 0755); mkErr == nil {
 			tmpPath := cachePath + ".tmp"
-			if writeErr := os.WriteFile(tmpPath, body, 0644); writeErr == nil {
+			if writeErr := os.WriteFile(tmpPath, filteredBytes, 0644); writeErr == nil {
 				if renameErr := os.Rename(tmpPath, cachePath); renameErr != nil {
-					_ = os.WriteFile(cachePath, body, 0644)
+					_ = os.WriteFile(cachePath, filteredBytes, 0644)
 					_ = os.Remove(tmpPath)
 				}
 			} else {
@@ -709,15 +1039,12 @@ func (s *PricingService) SyncNow(ctx context.Context) (*PricingSyncStatus, error
 		}
 	}
 
-	s.mu.RLock()
-	metaCopy := s.syncMeta
-	s.mu.RUnlock()
 	if err := s.persistSettingJSON(ctx, SettingKeyModelPricingSyncMeta, metaCopy); err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to persist sync metadata: %v", err)
 	}
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Synced models.dev successfully (%d providers, %d model groups, %d entries)",
-		metaCopy.ProviderCount, metaCopy.ModelGroupCount, metaCopy.RawEntryCount)
+	logger.LegacyPrintf("service.pricing", "[Pricing] Synced supported models.dev pricing (%d channels, %d models, %d entries, skipped_locked=%d, overwritten=%d)",
+		metaCopy.ChannelCount, metaCopy.ModelCount, metaCopy.RawEntryCount, skippedLocked, overwrittenCount)
 	return s.GetSyncStatus(), nil
 }
 
@@ -764,7 +1091,7 @@ func (s *PricingService) UpdateSyncConfig(ctx context.Context, next PricingSyncC
 	return s.GetSyncStatus(), nil
 }
 
-// GetSyncStatus returns the current sync config, metadata, and override summary.
+// GetSyncStatus returns the current sync config, metadata, and override/lock summary.
 func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -776,16 +1103,53 @@ func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 		}
 	}
 
+	defaultOverrideCount := 0
+	channelOverrideCount := 0
+	lockedChannelCount := 0
+	unlockedCustomCount := 0
+
+	for modelID, ov := range s.overrides.Default {
+		isCustom := ov.IsCustom || !ov.Locked
+		if isCustom {
+			defaultOverrideCount++
+		}
+		if s.models[modelID] != nil {
+			if ov.Locked {
+				lockedChannelCount++
+			} else if isCustom {
+				unlockedCustomCount++
+			}
+		}
+	}
+	for chID, chModels := range s.overrides.Channels {
+		for modelID, ov := range chModels {
+			isCustom := ov.IsCustom || !ov.Locked
+			if isCustom {
+				channelOverrideCount++
+			}
+			if ov.Locked {
+				lockedChannelCount++
+			} else if isCustom {
+				if entry := s.models[modelID]; entry != nil && entry.channelByID[chID] != nil {
+					unlockedCustomCount++
+				}
+			}
+		}
+	}
+
 	return &PricingSyncStatus{
 		Config:               s.syncConfig,
 		Meta:                 s.syncMeta,
-		DefaultOverrideCount: len(s.overrides.Default),
+		DefaultOverrideCount: defaultOverrideCount,
+		ChannelOverrideCount: channelOverrideCount,
+		LockedChannelCount:   lockedChannelCount,
+		UnlockedCustomCount:  unlockedCustomCount,
 		GroupOverrideCounts:  groupCounts,
-		CacheLoaded:          len(s.modelGroups) > 0,
+		CacheLoaded:          len(s.models) > 0,
 	}
 }
 
-// GetStatus 获取服务状态（兼容旧状态接口）
+// GetStatus 获取服务状态
 func (s *PricingService) GetStatus() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -793,8 +1157,7 @@ func (s *PricingService) GetStatus() map[string]any {
 	return map[string]any{
 		"source":            "models.dev",
 		"model_count":       len(s.effectiveDefaultData),
-		"model_group_count": len(s.modelGroups),
-		"provider_count":    len(s.providerSummaries),
+		"channel_count":     s.syncMeta.ChannelCount,
 		"last_updated":      s.lastUpdated,
 		"local_hash":        s.localHash[:min(8, len(s.localHash))],
 		"auto_sync_enabled": s.syncConfig.AutoSyncEnabled,
@@ -821,11 +1184,11 @@ func (s *PricingService) validatePricingURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-// --- models.dev parsing & original model ID grouping ---
+// --- models.dev parsing & system-supported filtering ---
 
 // NormalizeOriginalModelID extracts the canonical original model ID so the same model
-// across different upstream channels/providers (e.g., "anthropic/claude-opus-5",
-// "global.anthropic.claude-opus-5-v1:0", "claude-opus-5@default") groups together cleanly.
+// across different account-type channels (e.g., "anthropic/claude-opus-5",
+// "global.anthropic.claude-opus-5-v1:0", "claude-opus-5@default") aligns cleanly.
 func NormalizeOriginalModelID(rawModelID string) string {
 	id := strings.TrimSpace(rawModelID)
 	if id == "" {
@@ -841,17 +1204,14 @@ func NormalizeOriginalModelID(rawModelID string) string {
 		id = strings.TrimSpace(strings.TrimSuffix(id, "[1m]"))
 	}
 
-	// Bedrock geo+vendor prefixes (e.g. global.anthropic.claude-opus-4-6-v1)
 	id = bedrockRegionPrefixRe.ReplaceAllString(id, "")
 	id = bedrockVendorPrefixRe.ReplaceAllString(id, "")
 	id = bedrockVersionSuffixRe.ReplaceAllString(id, "")
 
-	// Vertex AI @default and @YYYYMMDD forms
 	id = strings.TrimSuffix(id, "@default")
 	id = vertexDateSuffixRe.ReplaceAllString(id, "-$1")
 	id = strings.ReplaceAll(id, "@", "-")
 
-	// Strip non-numeric variant suffix like :free, :exacto, :beta, :extended
 	if idx := strings.Index(id, ":"); idx != -1 {
 		id = id[:idx]
 	}
@@ -859,25 +1219,111 @@ func NormalizeOriginalModelID(rawModelID string) string {
 	return strings.TrimSpace(id)
 }
 
-func makeCandidateKey(providerID, rawModelID string) string {
-	return strings.ToLower(strings.TrimSpace(providerID)) + "::" + strings.TrimSpace(rawModelID)
+func inferSystemPlatformForModel(origID, fallbackPlatform string) string {
+	switch {
+	case strings.HasPrefix(origID, "claude-"):
+		return PlatformAnthropic
+	case strings.HasPrefix(origID, "gpt-"),
+		strings.HasPrefix(origID, "o1"),
+		strings.HasPrefix(origID, "o3"),
+		strings.HasPrefix(origID, "o4"),
+		strings.HasPrefix(origID, "chatgpt-"),
+		strings.HasPrefix(origID, "codex-"),
+		strings.HasPrefix(origID, "text-embedding-"),
+		strings.HasPrefix(origID, "dall-e"),
+		strings.HasPrefix(origID, "whisper"),
+		strings.HasPrefix(origID, "tts-"):
+		return PlatformOpenAI
+	case strings.HasPrefix(origID, "gemini-"),
+		strings.HasPrefix(origID, "gemma-"),
+		strings.HasPrefix(origID, "imagen-"),
+		strings.HasPrefix(origID, "veo-"),
+		strings.HasPrefix(origID, "deep-research-"):
+		return PlatformGemini
+	case strings.HasPrefix(origID, "grok-"),
+		strings.HasPrefix(origID, "composer-"):
+		return PlatformGrok
+	case strings.HasPrefix(origID, "deepseek-"):
+		return PlatformDeepseek
+	case strings.HasPrefix(origID, "glm-"):
+		return PlatformZhipu
+	case strings.HasPrefix(origID, "kimi-"),
+		strings.HasPrefix(origID, "moonshot-"):
+		return PlatformKimi
+	case strings.HasPrefix(origID, "minimax-"):
+		return PlatformMiniMax
+	case strings.HasPrefix(origID, "jev-"):
+		return PlatformTypeSafe
+	default:
+		if fallbackPlatform != "" {
+			return fallbackPlatform
+		}
+		return PlatformOpenAI
+	}
 }
 
-func parseModelsDevCatalog(body []byte) (
-	map[string]*ModelsDevModelGroup,
+func defaultProviderForSystemPlatform(platform string) string {
+	if spec, ok := domain.LookupPlatform(platform); ok && spec.ModelsDevProvider != "" {
+		return spec.ModelsDevProvider
+	}
+	return ""
+}
+
+func scoreChannelEntry(spec supportedModelsDevProviderSpec, origID, rawModelID string, raw modelsDevRawModel) int {
+	score := 0
+	primaryPlatform := inferSystemPlatformForModel(origID, spec.Platform)
+	if spec.Platform == primaryPlatform && spec.IsDefault && !spec.IsAggregator {
+		score += 2000
+	} else if spec.Platform == primaryPlatform && !spec.IsAggregator {
+		score += 1000
+	} else if spec.IsDefault {
+		score += 400
+	}
+	// Prefer exact non-regional canonical ID within the same provider (e.g. global.anthropic.* or bare id)
+	lowerRaw := strings.ToLower(strings.TrimSpace(rawModelID))
+	if lowerRaw == origID {
+		score += 100
+	} else if strings.HasPrefix(lowerRaw, "global.") {
+		score += 60
+	} else if strings.HasPrefix(lowerRaw, "anthropic.") || strings.HasSuffix(lowerRaw, "@default") {
+		score += 40
+	}
+	if raw.Cost != nil {
+		if raw.Cost.CacheRead != nil && *raw.Cost.CacheRead > 0 {
+			score += 15
+		}
+		if raw.Cost.CacheWrite != nil && *raw.Cost.CacheWrite > 0 {
+			score += 15
+		}
+		if len(raw.Cost.Tiers) > 0 || raw.Cost.ContextOver200k != nil {
+			score += 10
+		}
+	}
+	if strings.EqualFold(raw.Status, "deprecated") {
+		score -= 400
+	}
+	return score
+}
+
+func parseSupportedModelsDevCatalog(body []byte) (
+	map[string]*SupportedModelEntry,
 	map[string][]string,
-	[]ModelsDevProviderSummary,
+	[]SupportedPlatformSummary,
+	map[string]modelsDevRawProvider,
+	int,
 	int,
 	error,
 ) {
 	var rawProviders map[string]modelsDevRawProvider
 	if err := json.Unmarshal(body, &rawProviders); err != nil {
-		return nil, nil, nil, 0, fmt.Errorf("unmarshal models.dev JSON: %w", err)
+		return nil, nil, nil, nil, 0, 0, fmt.Errorf("unmarshal models.dev JSON: %w", err)
 	}
 
-	groups := make(map[string]*ModelsDevModelGroup)
+	models := make(map[string]*SupportedModelEntry)
+	platformSetsByModel := make(map[string]map[string]struct{})
 	providerModelSets := make(map[string]map[string]struct{})
-	providerNames := make(map[string]string)
+	filteredRaw := make(map[string]modelsDevRawProvider)
+	activeChannels := make(map[string]struct{})
 	rawEntryCount := 0
 
 	for provKey, prov := range rawProviders {
@@ -885,15 +1331,12 @@ func parseModelsDevCatalog(body []byte) (
 		if providerID == "" {
 			providerID = strings.ToLower(strings.TrimSpace(provKey))
 		}
-		if providerID == "" || len(prov.Models) == 0 {
+		spec, supported := supportedModelsDevProviderMap[providerID]
+		if !supported || len(prov.Models) == 0 {
 			continue
 		}
-		providerName := strings.TrimSpace(prov.Name)
-		if providerName == "" {
-			providerName = providerID
-		}
-		providerNames[providerID] = providerName
 
+		keptRawModels := make(map[string]modelsDevRawModel)
 		for modelKey, rawModel := range prov.Models {
 			if rawModel.Cost == nil {
 				continue
@@ -910,109 +1353,141 @@ func parseModelsDevCatalog(body []byte) (
 			if origID == "" {
 				continue
 			}
+			if spec.ModelFilter != nil && !spec.ModelFilter(origID, rawModel) {
+				continue
+			}
 
+			keptRawModels[modelKey] = rawModel
 			pricingPM, catalogPricing := convertModelsDevCost(providerID, rawModel)
 			displayName := strings.TrimSpace(rawModel.Name)
 			if displayName == "" {
 				displayName = origID
 			}
-			var ctxLimit, outLimit int
-			if rawModel.Limit != nil {
-				ctxLimit = rawModel.Limit.Context
-				outLimit = rawModel.Limit.Output
-			}
 
-			candKey := makeCandidateKey(providerID, rawModelID)
-			cand := ModelsDevCandidate{
-				CandidateKey: candKey,
-				ProviderID:   providerID,
-				ProviderName: providerName,
-				RawModelID:   rawModelID,
-				DisplayName:  displayName,
-				Family:       strings.TrimSpace(rawModel.Family),
-				ReleaseDate:  strings.TrimSpace(rawModel.ReleaseDate),
-				Status:       strings.TrimSpace(rawModel.Status),
-				ContextLimit: ctxLimit,
-				OutputLimit:  outLimit,
-				Pricing:      pricingPM,
-				catalog:      catalogPricing,
-				score:        scoreModelsDevCandidate(providerID, rawModelID, origID, rawModel),
-			}
-
-			grp := groups[origID]
-			if grp == nil {
-				grp = &ModelsDevModelGroup{
-					ModelID:         origID,
-					DisplayName:     displayName,
-					Family:          cand.Family,
-					ReleaseDate:     cand.ReleaseDate,
-					candidatesByKey: make(map[string]*ModelsDevCandidate),
+			entry := models[origID]
+			if entry == nil {
+				primaryPlatform := inferSystemPlatformForModel(origID, spec.Platform)
+				entry = &SupportedModelEntry{
+					ModelID:      origID,
+					DisplayName:  displayName,
+					Family:       strings.TrimSpace(rawModel.Family),
+					ReleaseDate:  strings.TrimSpace(rawModel.ReleaseDate),
+					Platform:     primaryPlatform,
+					channelByID:  make(map[string]*AccountChannelPriceEntry),
+					rawByChannel: make(map[string]map[string]*CatalogModelPricing),
 				}
-				groups[origID] = grp
+				models[origID] = entry
+				platformSetsByModel[origID] = make(map[string]struct{})
+				platformSetsByModel[origID][primaryPlatform] = struct{}{}
+				if primaryPlatform == PlatformAnthropic || primaryPlatform == PlatformGemini {
+					platformSetsByModel[origID][PlatformAntigravity] = struct{}{}
+				}
 			}
-			grp.Candidates = append(grp.Candidates, cand)
+			platformSetsByModel[origID][spec.Platform] = struct{}{}
+
+			// Preserve exact raw model ID entry per channel (crucial for Bedrock global vs us/eu regional pricing!)
+			if entry.rawByChannel[providerID] == nil {
+				entry.rawByChannel[providerID] = make(map[string]*CatalogModelPricing)
+			}
+			entry.rawByChannel[providerID][strings.ToLower(rawModelID)] = catalogPricing
+
+			candScore := scoreChannelEntry(spec, origID, rawModelID, rawModel)
+			existingCh := entry.channelByID[providerID]
+			if existingCh == nil || candScore > existingCh.score {
+				chEntry := &AccountChannelPriceEntry{
+					ChannelID:   providerID,
+					ChannelName: spec.ChannelLabel,
+					Platform:    spec.Platform,
+					RawModelID:  rawModelID,
+					Pricing:     pricingPM,
+					catalog:     catalogPricing,
+					score:       candScore,
+				}
+				entry.channelByID[providerID] = chEntry
+			}
 
 			if providerModelSets[providerID] == nil {
 				providerModelSets[providerID] = make(map[string]struct{})
 			}
 			providerModelSets[providerID][origID] = struct{}{}
+			activeChannels[providerID] = struct{}{}
 			rawEntryCount++
 		}
+
+		if len(keptRawModels) > 0 {
+			filteredRaw[providerID] = modelsDevRawProvider{
+				ID:     providerID,
+				Name:   spec.ChannelLabel,
+				API:    prov.API,
+				Models: keptRawModels,
+			}
+		}
 	}
 
-	if len(groups) == 0 {
-		return nil, nil, nil, 0, fmt.Errorf("no valid pricing entries found in models.dev catalog")
+	if len(models) == 0 {
+		return nil, nil, nil, nil, 0, 0, fmt.Errorf("no valid supported pricing entries found in models.dev catalog")
 	}
 
-	// Sort candidates within each original model ID group and mark the best default candidate.
-	for _, grp := range groups {
-		sort.SliceStable(grp.Candidates, func(i, j int) bool {
-			if grp.Candidates[i].score != grp.Candidates[j].score {
-				return grp.Candidates[i].score > grp.Candidates[j].score
+	platformModelCounts := make(map[string]int)
+	for origID, entry := range models {
+		channels := make([]AccountChannelPriceEntry, 0, len(entry.channelByID))
+		for _, ch := range entry.channelByID {
+			channels = append(channels, *ch)
+		}
+		sort.SliceStable(channels, func(i, j int) bool {
+			if channels[i].score != channels[j].score {
+				return channels[i].score > channels[j].score
 			}
-			if grp.Candidates[i].ProviderID != grp.Candidates[j].ProviderID {
-				return grp.Candidates[i].ProviderID < grp.Candidates[j].ProviderID
-			}
-			return grp.Candidates[i].RawModelID < grp.Candidates[j].RawModelID
+			return channels[i].ChannelID < channels[j].ChannelID
 		})
-		grp.Candidates[0].IsRecommended = true
-		grp.DefaultCandidateKey = grp.Candidates[0].CandidateKey
-		grp.DisplayName = grp.Candidates[0].DisplayName
-		if grp.Candidates[0].Family != "" {
-			grp.Family = grp.Candidates[0].Family
+		channels[0].IsDefault = true
+		entry.Channels = channels
+		entry.DefaultChannelID = channels[0].ChannelID
+		entry.DefaultChannelName = channels[0].ChannelName
+		entry.DefaultPricing = channels[0].Pricing
+		entry.defaultCatalog = channels[0].catalog
+		if channels[0].Pricing.DisplayName != "" {
+			entry.DisplayName = channels[0].Pricing.DisplayName
 		}
-		if grp.Candidates[0].ReleaseDate != "" {
-			grp.ReleaseDate = grp.Candidates[0].ReleaseDate
+
+		// Rebuild channelByID pointers against sorted slice
+		entry.channelByID = make(map[string]*AccountChannelPriceEntry, len(channels))
+		for i := range entry.Channels {
+			entry.channelByID[entry.Channels[i].ChannelID] = &entry.Channels[i]
 		}
-		grp.candidatesByKey = make(map[string]*ModelsDevCandidate, len(grp.Candidates))
-		for i := range grp.Candidates {
-			grp.candidatesByKey[grp.Candidates[i].CandidateKey] = &grp.Candidates[i]
+
+		// Collect platforms in canonical domain.Platforms() display order
+		pSet := platformSetsByModel[origID]
+		orderedPlatforms := make([]string, 0, len(pSet))
+		for _, pSpec := range domain.Platforms() {
+			if _, ok := pSet[pSpec.ID]; ok {
+				orderedPlatforms = append(orderedPlatforms, pSpec.ID)
+				platformModelCounts[pSpec.ID]++
+			}
 		}
+		entry.Platforms = orderedPlatforms
 	}
 
 	providerModels := make(map[string][]string, len(providerModelSets))
-	providerSummaries := make([]ModelsDevProviderSummary, 0, len(providerModelSets))
 	for pid, set := range providerModelSets {
-		models := make([]string, 0, len(set))
+		list := make([]string, 0, len(set))
 		for m := range set {
-			models = append(models, m)
+			list = append(list, m)
 		}
-		sort.Strings(models)
-		providerModels[pid] = models
-		providerSummaries = append(providerSummaries, ModelsDevProviderSummary{
-			ID:         pid,
-			Name:       providerNames[pid],
-			ModelCount: len(models),
+		sort.Strings(list)
+		providerModels[pid] = list
+	}
+
+	platformSummaries := make([]SupportedPlatformSummary, 0, len(domain.Platforms()))
+	for _, pSpec := range domain.Platforms() {
+		platformSummaries = append(platformSummaries, SupportedPlatformSummary{
+			ID:         pSpec.ID,
+			Name:       pSpec.DisplayName,
+			ModelCount: platformModelCounts[pSpec.ID],
 		})
 	}
-	sort.Slice(providerSummaries, func(i, j int) bool {
-		if providerSummaries[i].ModelCount != providerSummaries[j].ModelCount {
-			return providerSummaries[i].ModelCount > providerSummaries[j].ModelCount
-		}
-		return strings.ToLower(providerSummaries[i].Name) < strings.ToLower(providerSummaries[j].Name)
-	})
 
-	return groups, providerModels, providerSummaries, rawEntryCount, nil
+	return models, providerModels, platformSummaries, filteredRaw, len(activeChannels), rawEntryCount, nil
 }
 
 func convertModelsDevCost(providerID string, raw modelsDevRawModel) (TokenPricingPerMillion, *CatalogModelPricing) {
@@ -1142,278 +1617,283 @@ func tokenPricingPerMillionToCatalog(pm TokenPricingPerMillion, provider, mode s
 	return cat
 }
 
-func scoreModelsDevCandidate(providerID, rawModelID, origID string, raw modelsDevRawModel) int {
-	score := 0
-
-	// 1. First-party official provider match (highest priority)
-	if canon := strings.ToLower(strings.TrimSpace(raw.CanonicalModelID)); canon != "" {
-		if strings.HasPrefix(canon, providerID+"/") {
-			score += 1000
-		}
+func overrideToCatalog(ov ModelPricingOverride) *CatalogModelPricing {
+	cat := tokenPricingPerMillionToCatalog(ov.Custom, "custom", "chat", true)
+	cat.priceOverrides = tokenPriceOverrides{
+		input:     true,
+		output:    true,
+		cacheRead: true,
 	}
-	if expected := expectedFirstPartyProvider(origID); expected != "" && providerID == expected {
-		score += 1200
-	}
-
-	// 2. Primary cloud / reputable catalog providers
-	switch providerID {
-	case "anthropic", "openai", "google", "deepseek", "xai", "zhipuai", "moonshotai", "minimax", "mistral", "cohere":
-		score += 300
-	case "openrouter", "google-vertex", "google-vertex-anthropic", "amazon-bedrock", "azure", "azure-cognitive-services":
-		score += 180
-	case "groq", "togetherai", "fireworks-ai", "perplexity", "alibaba", "dashscope":
-		score += 120
-	}
-
-	// 3. Exact raw ID match (no extra prefix/variant)
-	if strings.EqualFold(rawModelID, origID) {
-		score += 40
-	}
-
-	// 4. Richer cost metadata
-	if raw.Cost != nil {
-		if raw.Cost.CacheRead != nil && *raw.Cost.CacheRead > 0 {
-			score += 20
-		}
-		if raw.Cost.CacheWrite != nil && *raw.Cost.CacheWrite > 0 {
-			score += 20
-		}
-		if len(raw.Cost.Tiers) > 0 || raw.Cost.ContextOver200k != nil {
-			score += 15
-		}
-		if raw.Cost.Input != nil && *raw.Cost.Input > 0 {
-			score += 10
-		}
-	}
-
-	// 5. Penalize deprecated / :free variants as default
-	if strings.EqualFold(raw.Status, "deprecated") {
-		score -= 400
-	}
-	if strings.Contains(strings.ToLower(rawModelID), ":free") {
-		score -= 250
-	}
-	return score
+	return cat
 }
 
-func expectedFirstPartyProvider(origID string) string {
-	switch {
-	case strings.HasPrefix(origID, "claude-"):
-		return "anthropic"
-	case strings.HasPrefix(origID, "gpt-"),
-		strings.HasPrefix(origID, "o1"),
-		strings.HasPrefix(origID, "o3"),
-		strings.HasPrefix(origID, "o4"),
-		strings.HasPrefix(origID, "chatgpt-"),
-		strings.HasPrefix(origID, "codex-"),
-		strings.HasPrefix(origID, "text-embedding-"),
-		strings.HasPrefix(origID, "dall-e"),
-		strings.HasPrefix(origID, "whisper"),
-		strings.HasPrefix(origID, "tts-"):
-		return "openai"
-	case strings.HasPrefix(origID, "gemini-"),
-		strings.HasPrefix(origID, "gemma-"),
-		strings.HasPrefix(origID, "imagen-"),
-		strings.HasPrefix(origID, "veo-"):
-		return "google"
-	case strings.HasPrefix(origID, "deepseek-"):
-		return "deepseek"
-	case strings.HasPrefix(origID, "grok-"):
-		return "xai"
-	case strings.HasPrefix(origID, "glm-"):
-		return "zhipuai"
-	case strings.HasPrefix(origID, "kimi-"),
-		strings.HasPrefix(origID, "moonshot-"):
-		return "moonshotai"
-	case strings.HasPrefix(origID, "minimax-"):
-		return "minimax"
-	case strings.HasPrefix(origID, "mistral"),
-		strings.HasPrefix(origID, "codestral"),
-		strings.HasPrefix(origID, "pixtral"),
-		strings.HasPrefix(origID, "ministral"),
-		strings.HasPrefix(origID, "magistral"):
-		return "mistral"
-	default:
-		return ""
-	}
-}
-
-// --- Materializing effective default pricing & resolving selections ---
-
-func (s *PricingService) resolveSelectionToCatalogLocked(modelID string, sel ModelPricingSelection) *CatalogModelPricing {
-	switch sel.Mode {
-	case PricingSelectionModeCustom:
-		if sel.Custom == nil {
-			return nil
-		}
-		cat := tokenPricingPerMillionToCatalog(*sel.Custom, "custom", "chat", true)
-		cat.priceOverrides = tokenPriceOverrides{
-			input:     true,
-			output:    true,
-			cacheRead: true,
-		}
-		return cat
-	case PricingSelectionModeProvider:
-		if grp := s.modelGroups[modelID]; grp != nil {
-			if cand, ok := grp.candidatesByKey[sel.CandidateKey]; ok && cand != nil {
-				return cand.catalog
-			}
-			// Fallback by provider_id if raw_model_id changed slightly across syncs
-			if sel.ProviderID != "" {
-				for i := range grp.Candidates {
-					if strings.EqualFold(grp.Candidates[i].ProviderID, sel.ProviderID) {
-						return grp.Candidates[i].catalog
-					}
-				}
-			}
-		}
-		return nil
-	default:
-		return nil
-	}
-}
-
-// rebuildEffectiveDefaultLocked rebuilds s.effectiveDefaultData from models.dev groups + Default overrides.
-// Caller must hold s.mu write lock.
+// rebuildEffectiveDefaultLocked rebuilds s.effectiveDefaultData from supported models + Default overrides.
 func (s *PricingService) rebuildEffectiveDefaultLocked() {
-	next := make(map[string]*CatalogModelPricing, len(s.modelGroups)+len(s.overrides.Default))
+	next := make(map[string]*CatalogModelPricing, len(s.models)+len(s.overrides.Default))
 
-	// 1. Start with auto-selected default candidate for each models.dev model group
-	for modelID, grp := range s.modelGroups {
-		if len(grp.Candidates) > 0 && grp.Candidates[0].catalog != nil {
-			next[modelID] = grp.Candidates[0].catalog
+	for modelID, entry := range s.models {
+		if entry.defaultCatalog != nil {
+			next[modelID] = entry.defaultCatalog
 		}
 	}
 
-	// 2. Overlay global default selections (switched cached provider or custom prices, including custom-only models)
-	for modelID, sel := range s.overrides.Default {
+	for modelID, ov := range s.overrides.Default {
 		normID := NormalizeOriginalModelID(modelID)
 		if normID == "" {
 			continue
 		}
-		if cat := s.resolveSelectionToCatalogLocked(normID, sel); cat != nil {
-			next[normID] = cat
-		}
+		next[normID] = overrideToCatalog(ov)
 	}
 
 	s.effectiveDefaultData = next
 }
 
-// --- Admin Mutations (Switch cached price, Edit custom price, Reset) ---
-
-// SelectCachedProvider switches the active models.dev cached provider price for a model
-// (in default scope when groupID == nil or <= 0, or in a specific group scope when groupID > 0).
-func (s *PricingService) SelectCachedProvider(ctx context.Context, groupID *int64, modelID, candidateKey string) error {
-	normID := NormalizeOriginalModelID(modelID)
-	if normID == "" {
-		return errors.New("model_id is required")
-	}
-	candidateKey = strings.TrimSpace(candidateKey)
-	if candidateKey == "" {
-		return errors.New("candidate_key is required")
-	}
-
-	s.mu.Lock()
-	grp := s.modelGroups[normID]
-	if grp == nil {
-		s.mu.Unlock()
-		return fmt.Errorf("model %q not found in models.dev cache", normID)
-	}
-	cand, ok := grp.candidatesByKey[candidateKey]
-	if !ok || cand == nil {
-		s.mu.Unlock()
-		return fmt.Errorf("cached provider candidate %q not found for model %q", candidateKey, normID)
-	}
-
-	sel := ModelPricingSelection{
-		Mode:         PricingSelectionModeProvider,
-		CandidateKey: cand.CandidateKey,
-		ProviderID:   cand.ProviderID,
-		RawModelID:   cand.RawModelID,
-		UpdatedAt:    time.Now(),
-	}
-
-	if groupID != nil && *groupID > 0 {
-		gidKey := strconv.FormatInt(*groupID, 10)
-		if s.overrides.Groups == nil {
-			s.overrides.Groups = make(map[string]map[string]ModelPricingSelection)
-		}
-		if s.overrides.Groups[gidKey] == nil {
-			s.overrides.Groups[gidKey] = make(map[string]ModelPricingSelection)
-		}
-		s.overrides.Groups[gidKey][normID] = sel
-	} else {
-		if s.overrides.Default == nil {
-			s.overrides.Default = make(map[string]ModelPricingSelection)
-		}
-		// Selecting the auto-recommended candidate clears redundant default override
-		if cand.CandidateKey == grp.DefaultCandidateKey {
-			delete(s.overrides.Default, normID)
-		} else {
-			s.overrides.Default[normID] = sel
-		}
-		s.rebuildEffectiveDefaultLocked()
-	}
-
-	overridesCopy := clonePricingOverridesState(s.overrides)
-	s.mu.Unlock()
-
-	return s.persistSettingJSON(ctx, SettingKeyModelPricingOverrides, overridesCopy)
-}
+// --- Admin Mutations (Edit custom price for Default, Account-Type Channel, or System Group; Lock; Reset) ---
 
 // UpsertCustomPricing saves custom per-million-token prices for a model
-// (either in default scope or for a specific group).
-func (s *PricingService) UpsertCustomPricing(ctx context.Context, groupID *int64, modelID string, custom TokenPricingPerMillion) error {
-	normID := NormalizeOriginalModelID(modelID)
+// (either in default scope when groupID == nil/<=0, or for a specific system group).
+func (s *PricingService) UpsertCustomPricing(ctx context.Context, groupID *int64, modelID, platform string, custom TokenPricingPerMillion) error {
+	return s.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
+		GroupID:  groupID,
+		ModelID:  modelID,
+		Platform: platform,
+		Custom:   custom,
+	})
+}
+
+// UpsertCustomPricingWithOptions saves custom prices at one of three scopes:
+//   - GroupID > 0: System Group override (highest priority, never overwritten by sync).
+//   - ChannelID != "": Account-Type Channel override (if equal to model's default channel, unified with Default).
+//   - Otherwise: Global Default override.
+func (s *PricingService) UpsertCustomPricingWithOptions(ctx context.Context, opts UpsertPricingOverrideInput) error {
+	normID := NormalizeOriginalModelID(opts.ModelID)
 	if normID == "" {
 		return errors.New("model_id is required")
 	}
-	if err := validateCustomTokenPricing(custom); err != nil {
+	channelID := strings.ToLower(strings.TrimSpace(opts.ChannelID))
+	hasGroup := opts.GroupID != nil && *opts.GroupID > 0
+	if hasGroup && channelID != "" {
+		return errors.New("group_id and channel_id cannot both be specified")
+	}
+	if err := validateCustomTokenPricing(opts.Custom); err != nil {
 		return err
 	}
-	custom.DisplayName = strings.TrimSpace(custom.DisplayName)
 
-	customCopy := custom
-	sel := ModelPricingSelection{
-		Mode:      PricingSelectionModeCustom,
-		Custom:    &customCopy,
+	custom := opts.Custom
+	custom.DisplayName = strings.TrimSpace(custom.DisplayName)
+	platform := strings.ToLower(strings.TrimSpace(opts.Platform))
+
+	locked := true
+	if opts.Locked != nil {
+		locked = *opts.Locked
+	}
+
+	ov := ModelPricingOverride{
+		Platform:  platform,
+		Custom:    custom,
+		Locked:    locked,
+		IsCustom:  true,
 		UpdatedAt: time.Now(),
 	}
 
 	s.mu.Lock()
-	if groupID != nil && *groupID > 0 {
-		gidKey := strconv.FormatInt(*groupID, 10)
+	entry := s.models[normID]
+	if ov.Platform == "" {
+		if entry != nil {
+			ov.Platform = entry.Platform
+		} else {
+			ov.Platform = inferSystemPlatformForModel(normID, "")
+		}
+	}
+
+	switch {
+	case hasGroup:
+		ov.Locked = false // system group overrides are always independent of models.dev sync
+		gidKey := strconv.FormatInt(*opts.GroupID, 10)
 		if s.overrides.Groups == nil {
-			s.overrides.Groups = make(map[string]map[string]ModelPricingSelection)
+			s.overrides.Groups = make(map[string]map[string]ModelPricingOverride)
 		}
 		if s.overrides.Groups[gidKey] == nil {
-			s.overrides.Groups[gidKey] = make(map[string]ModelPricingSelection)
+			s.overrides.Groups[gidKey] = make(map[string]ModelPricingOverride)
 		}
-		s.overrides.Groups[gidKey][normID] = sel
-	} else {
+		s.overrides.Groups[gidKey][normID] = ov
+
+	case channelID != "" && (entry == nil || channelID != entry.DefaultChannelID):
+		if _, knownSpec := supportedModelsDevProviderMap[channelID]; !knownSpec && (entry == nil || entry.channelByID[channelID] == nil) {
+			s.mu.Unlock()
+			return fmt.Errorf("unsupported channel_id: %s", channelID)
+		}
+		if s.overrides.Channels == nil {
+			s.overrides.Channels = make(map[string]map[string]ModelPricingOverride)
+		}
+		if s.overrides.Channels[channelID] == nil {
+			s.overrides.Channels[channelID] = make(map[string]ModelPricingOverride)
+		}
+		s.overrides.Channels[channelID][normID] = ov
+
+	default:
 		if s.overrides.Default == nil {
-			s.overrides.Default = make(map[string]ModelPricingSelection)
+			s.overrides.Default = make(map[string]ModelPricingOverride)
 		}
-		s.overrides.Default[normID] = sel
+		if channelID != "" && ov.Custom.DisplayName == "" {
+			if existing, ok := s.overrides.Default[normID]; ok && existing.Custom.DisplayName != "" {
+				ov.Custom.DisplayName = existing.Custom.DisplayName
+			}
+		}
+		s.overrides.Default[normID] = ov
+		// Keep default channel unified in Default (remove any stale duplicate under Channels[DefaultChannelID])
+		if entry != nil && entry.DefaultChannelID != "" {
+			if cm := s.overrides.Channels[entry.DefaultChannelID]; cm != nil {
+				delete(cm, normID)
+				if len(cm) == 0 {
+					delete(s.overrides.Channels, entry.DefaultChannelID)
+				}
+			}
+		}
 		s.rebuildEffectiveDefaultLocked()
 	}
+
 	overridesCopy := clonePricingOverridesState(s.overrides)
 	s.mu.Unlock()
 
 	return s.persistSettingJSON(ctx, SettingKeyModelPricingOverrides, overridesCopy)
 }
 
-// ResetModelPricing resets a model's override:
-//   - If groupID > 0: removes the group override so the group falls back to the default price.
-//   - If groupID == nil or <= 0: removes the default override (restores models.dev default, or deletes custom-only model).
-func (s *PricingService) ResetModelPricing(ctx context.Context, groupID *int64, modelID string) error {
+// SetChannelPriceLock locks or unlocks a specific (model_id, channel_id) channel price so automatic
+// sync skips locked channels on subsequent updates.
+func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, channelID string, locked bool) error {
 	normID := NormalizeOriginalModelID(modelID)
 	if normID == "" {
 		return errors.New("model_id is required")
 	}
+	channelID = strings.ToLower(strings.TrimSpace(channelID))
 
 	s.mu.Lock()
-	if groupID != nil && *groupID > 0 {
+	entry := s.models[normID]
+	if channelID == "" && entry != nil {
+		channelID = entry.DefaultChannelID
+	}
+
+	isDefaultChannel := entry == nil || channelID == "" || channelID == entry.DefaultChannelID
+	now := time.Now()
+
+	if isDefaultChannel {
+		existing, hasExisting := s.overrides.Default[normID]
+		if locked {
+			if hasExisting {
+				if !existing.Locked {
+					existing.IsCustom = true
+				}
+				existing.Locked = true
+				existing.UpdatedAt = now
+				s.overrides.Default[normID] = existing
+			} else {
+				if entry == nil {
+					s.mu.Unlock()
+					return fmt.Errorf("model %q not found", normID)
+				}
+				if s.overrides.Default == nil {
+					s.overrides.Default = make(map[string]ModelPricingOverride)
+				}
+				s.overrides.Default[normID] = ModelPricingOverride{
+					Platform:  entry.Platform,
+					Custom:    entry.DefaultPricing,
+					Locked:    true,
+					IsCustom:  false,
+					UpdatedAt: now,
+				}
+			}
+		} else if hasExisting {
+			if existing.IsCustom {
+				existing.Locked = false
+				existing.UpdatedAt = now
+				s.overrides.Default[normID] = existing
+			} else {
+				delete(s.overrides.Default, normID)
+			}
+		}
+		s.rebuildEffectiveDefaultLocked()
+	} else {
+		var chEntry *AccountChannelPriceEntry
+		if entry != nil {
+			chEntry = entry.channelByID[channelID]
+		}
+		chMap := s.overrides.Channels[channelID]
+		existing, hasExisting := ModelPricingOverride{}, false
+		if chMap != nil {
+			existing, hasExisting = chMap[normID]
+		}
+		if locked {
+			if hasExisting {
+				if !existing.Locked {
+					existing.IsCustom = true
+				}
+				existing.Locked = true
+				existing.UpdatedAt = now
+				chMap[normID] = existing
+			} else {
+				if chEntry == nil {
+					s.mu.Unlock()
+					return fmt.Errorf("channel %q not found for model %q", channelID, normID)
+				}
+				if s.overrides.Channels == nil {
+					s.overrides.Channels = make(map[string]map[string]ModelPricingOverride)
+				}
+				if s.overrides.Channels[channelID] == nil {
+					s.overrides.Channels[channelID] = make(map[string]ModelPricingOverride)
+				}
+				s.overrides.Channels[channelID][normID] = ModelPricingOverride{
+					Platform:  entry.Platform,
+					Custom:    chEntry.Pricing,
+					Locked:    true,
+					IsCustom:  false,
+					UpdatedAt: now,
+				}
+			}
+		} else if hasExisting {
+			if existing.IsCustom {
+				existing.Locked = false
+				existing.UpdatedAt = now
+				chMap[normID] = existing
+			} else {
+				delete(chMap, normID)
+				if len(chMap) == 0 {
+					delete(s.overrides.Channels, channelID)
+				}
+			}
+		}
+	}
+
+	overridesCopy := clonePricingOverridesState(s.overrides)
+	s.mu.Unlock()
+
+	return s.persistSettingJSON(ctx, SettingKeyModelPricingOverrides, overridesCopy)
+}
+
+// ResetModelPricing resets a model's override in default or group scope.
+func (s *PricingService) ResetModelPricing(ctx context.Context, groupID *int64, modelID string) error {
+	return s.ResetModelPricingWithScope(ctx, groupID, "", modelID)
+}
+
+// ResetModelPricingWithScope resets a model's override/lock at Default, Channel, or Group scope:
+//   - If groupID > 0: removes the group override so the group falls back to matched channel / default price.
+//   - If channelID != "": removes the channel override/lock (unified with Default if default channel).
+//   - Otherwise: removes the default override/lock (restores models.dev default, or deletes custom-only model).
+func (s *PricingService) ResetModelPricingWithScope(ctx context.Context, groupID *int64, channelID, modelID string) error {
+	normID := NormalizeOriginalModelID(modelID)
+	if normID == "" {
+		return errors.New("model_id is required")
+	}
+	channelID = strings.ToLower(strings.TrimSpace(channelID))
+	hasGroup := groupID != nil && *groupID > 0
+	if hasGroup && channelID != "" {
+		return errors.New("group_id and channel_id cannot both be specified")
+	}
+
+	s.mu.Lock()
+	entry := s.models[normID]
+	switch {
+	case hasGroup:
 		gidKey := strconv.FormatInt(*groupID, 10)
 		if gm := s.overrides.Groups[gidKey]; gm != nil {
 			delete(gm, normID)
@@ -1421,8 +1901,23 @@ func (s *PricingService) ResetModelPricing(ctx context.Context, groupID *int64, 
 				delete(s.overrides.Groups, gidKey)
 			}
 		}
-	} else {
+	case channelID != "" && (entry == nil || channelID != entry.DefaultChannelID):
+		if cm := s.overrides.Channels[channelID]; cm != nil {
+			delete(cm, normID)
+			if len(cm) == 0 {
+				delete(s.overrides.Channels, channelID)
+			}
+		}
+	default:
 		delete(s.overrides.Default, normID)
+		if entry != nil && entry.DefaultChannelID != "" {
+			if cm := s.overrides.Channels[entry.DefaultChannelID]; cm != nil {
+				delete(cm, normID)
+				if len(cm) == 0 {
+					delete(s.overrides.Channels, entry.DefaultChannelID)
+				}
+			}
+		}
 		s.rebuildEffectiveDefaultLocked()
 	}
 	overridesCopy := clonePricingOverridesState(s.overrides)
@@ -1469,41 +1964,49 @@ func validateCustomTokenPricing(p TokenPricingPerMillion) error {
 
 func clonePricingOverridesState(in PricingOverridesState) PricingOverridesState {
 	out := PricingOverridesState{
-		Default: make(map[string]ModelPricingSelection, len(in.Default)),
-		Groups:  make(map[string]map[string]ModelPricingSelection, len(in.Groups)),
+		Default:  make(map[string]ModelPricingOverride, len(in.Default)),
+		Channels: make(map[string]map[string]ModelPricingOverride, len(in.Channels)),
+		Groups:   make(map[string]map[string]ModelPricingOverride, len(in.Groups)),
 	}
 	for k, v := range in.Default {
-		out.Default[k] = cloneModelPricingSelection(v)
+		out.Default[k] = cloneModelPricingOverride(v)
+	}
+	for chID, cm := range in.Channels {
+		if len(cm) == 0 {
+			continue
+		}
+		m := make(map[string]ModelPricingOverride, len(cm))
+		for k, v := range cm {
+			m[k] = cloneModelPricingOverride(v)
+		}
+		out.Channels[chID] = m
 	}
 	for gid, gm := range in.Groups {
 		if len(gm) == 0 {
 			continue
 		}
-		m := make(map[string]ModelPricingSelection, len(gm))
+		m := make(map[string]ModelPricingOverride, len(gm))
 		for k, v := range gm {
-			m[k] = cloneModelPricingSelection(v)
+			m[k] = cloneModelPricingOverride(v)
 		}
 		out.Groups[gid] = m
 	}
 	return out
 }
 
-func cloneModelPricingSelection(in ModelPricingSelection) ModelPricingSelection {
+func cloneModelPricingOverride(in ModelPricingOverride) ModelPricingOverride {
 	cp := in
-	if in.Custom != nil {
-		c := *in.Custom
-		if in.Custom.CacheWrite1hPerMillion != nil {
-			v := *in.Custom.CacheWrite1hPerMillion
-			c.CacheWrite1hPerMillion = &v
-		}
-		cp.Custom = &c
+	if in.Custom.CacheWrite1hPerMillion != nil {
+		v := *in.Custom.CacheWrite1hPerMillion
+		cp.Custom.CacheWrite1hPerMillion = &v
 	}
 	return cp
 }
 
-// --- Admin Catalog Listing & Filtering (cc-switch inspired) ---
+// --- Admin Catalog Listing & Filtering (Scoped to System Groups & Supported Platforms) ---
 
-// ListModelPricingCatalog returns the paginated, grouped model pricing catalog for the admin UI.
+// ListModelPricingCatalog returns the paginated list of system-supported models,
+// scoped to either Global Default or a specific System Group (filtered by that group's platform).
 func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *ModelPricingListResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1515,7 +2018,6 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 		query.PageSize = 50
 	}
 
-	// Count how many groups override each model
 	groupOverrideCounts := make(map[string]int)
 	for _, gm := range s.overrides.Groups {
 		for m := range gm {
@@ -1523,14 +2025,13 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 		}
 	}
 
-	var activeGroupOverrides map[string]ModelPricingSelection
+	var activeGroupOverrides map[string]ModelPricingOverride
 	if query.GroupID > 0 {
 		activeGroupOverrides = s.overrides.Groups[strconv.FormatInt(query.GroupID, 10)]
 	}
 
-	// Union of all model IDs: models.dev groups + default overrides + active group overrides
-	allIDs := make(map[string]struct{}, len(s.modelGroups)+len(s.overrides.Default)+len(activeGroupOverrides))
-	for id := range s.modelGroups {
+	allIDs := make(map[string]struct{}, len(s.models)+len(s.overrides.Default)+len(activeGroupOverrides))
+	for id := range s.models {
 		allIDs[id] = struct{}{}
 	}
 	for id := range s.overrides.Default {
@@ -1541,28 +2042,22 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 	}
 
 	needle := strings.ToLower(strings.TrimSpace(query.Search))
-	providerFilter := strings.ToLower(strings.TrimSpace(query.Provider))
 	filterMode := strings.ToLower(strings.TrimSpace(query.Filter))
+	groupPlatform := strings.ToLower(strings.TrimSpace(query.GroupPlatform))
+	platformFilter := strings.ToLower(strings.TrimSpace(query.Platform))
+	if groupPlatform != "" && groupPlatform != PlatformComposite {
+		platformFilter = groupPlatform
+	}
 
 	items := make([]ModelPricingListItem, 0, len(allIDs))
 	for modelID := range allIDs {
 		item := s.buildListItemLocked(modelID, query.GroupID, activeGroupOverrides, groupOverrideCounts[modelID])
 
-		// Provider filter
-		if providerFilter != "" && providerFilter != "all" {
-			if providerFilter == "custom" {
-				if !item.IsCustomOnly && item.Source != "default_custom" && item.Source != "group_custom" {
-					continue
-				}
-			} else {
-				matchedProvider := false
-				for _, c := range item.Candidates {
-					if c.ProviderID == providerFilter {
-						matchedProvider = true
-						break
-					}
-				}
-				if !matchedProvider {
+		// Platform filter (automatically applied for single-platform system groups, or manual filter)
+		if platformFilter != "" && platformFilter != "all" {
+			// Always show models explicitly overridden in the currently selected group
+			if !(query.GroupID > 0 && item.IsGroupOverridden) {
+				if !modelSupportsPlatform(item, platformFilter) {
 					continue
 				}
 			}
@@ -1572,25 +2067,24 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 		switch filterMode {
 		case "overridden":
 			if query.GroupID > 0 {
-				if !item.IsGroupOverridden {
+				if !item.IsGroupOverridden && item.ChannelOverrideCount == 0 {
 					continue
 				}
 			} else {
-				if !item.IsDefaultModified && !item.IsCustomOnly {
+				if !item.IsDefaultModified && !item.IsCustomOnly && item.ChannelOverrideCount == 0 {
 					continue
 				}
 			}
 		case "custom":
-			if !item.IsCustomOnly && item.Source != "default_custom" && item.Source != "group_custom" {
+			if !item.IsCustomOnly && item.Source != "default_custom" && item.Source != "group_custom" && item.ChannelOverrideCount == 0 {
 				continue
 			}
-		case "multi_provider":
-			if item.CandidateCount < 2 {
+		case "locked":
+			if item.LockedChannelCount == 0 {
 				continue
 			}
 		}
 
-		// Search filter
 		if needle != "" && !matchesPricingSearch(item, needle) {
 			continue
 		}
@@ -1598,7 +2092,6 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 		items = append(items, item)
 	}
 
-	// Ranking: exact model ID match first -> overridden/custom priority -> release date desc -> model ID asc
 	sort.Slice(items, func(i, j int) bool {
 		if needle != "" {
 			iExact := items[i].ModelID == needle
@@ -1634,149 +2127,162 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 		end = total
 	}
 
-	providers := make([]ModelsDevProviderSummary, len(s.providerSummaries))
-	copy(providers, s.providerSummaries)
+	platforms := make([]SupportedPlatformSummary, len(s.platformSummaries))
+	copy(platforms, s.platformSummaries)
 
 	return &ModelPricingListResult{
-		Items:     items[start:end],
-		Total:     total,
-		Page:      query.Page,
-		PageSize:  query.PageSize,
-		Providers: providers,
+		Items:         items[start:end],
+		Total:         total,
+		Page:          query.Page,
+		PageSize:      query.PageSize,
+		GroupPlatform: groupPlatform,
+		Platforms:     platforms,
 	}
+}
+
+func modelSupportsPlatform(item ModelPricingListItem, platform string) bool {
+	if strings.EqualFold(item.Platform, platform) {
+		return true
+	}
+	for _, p := range item.Platforms {
+		if strings.EqualFold(p, platform) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *PricingService) buildListItemLocked(
 	modelID string,
 	groupID int64,
-	activeGroupOverrides map[string]ModelPricingSelection,
+	activeGroupOverrides map[string]ModelPricingOverride,
 	groupOverrideCount int,
 ) ModelPricingListItem {
-	grp := s.modelGroups[modelID]
-	defaultSel, hasDefaultSel := s.overrides.Default[modelID]
+	entry := s.models[modelID]
+	defaultOv, hasDefaultOv := s.overrides.Default[modelID]
+	defaultIsCustom := hasDefaultOv && (defaultOv.IsCustom || !defaultOv.Locked)
+
+	platform := inferSystemPlatformForModel(modelID, "")
+	if hasDefaultOv && defaultOv.Platform != "" {
+		platform = defaultOv.Platform
+	}
 
 	item := ModelPricingListItem{
 		ModelID:            modelID,
 		DisplayName:        modelID,
-		IsCustomOnly:       grp == nil,
-		IsDefaultModified:  hasDefaultSel,
+		Platform:           platform,
+		Platforms:          []string{platform},
+		IsCustomOnly:       entry == nil,
+		IsDefaultModified:  defaultIsCustom,
+		IsDefaultLocked:    hasDefaultOv && defaultOv.Locked,
 		GroupOverrideCount: groupOverrideCount,
+		ChannelPrices:      []AccountChannelPriceEntry{},
 	}
 
-	if grp != nil {
-		item.DisplayName = grp.DisplayName
-		item.Family = grp.Family
-		item.ReleaseDate = grp.ReleaseDate
-		item.Candidates = make([]ModelsDevCandidate, len(grp.Candidates))
-		copy(item.Candidates, grp.Candidates)
-		item.CandidateCount = len(grp.Candidates)
-	} else {
-		item.Candidates = []ModelsDevCandidate{}
+	var defaultPricing TokenPricingPerMillion
+	defaultSource := "default_auto"
+	var defaultUpdatedAt *time.Time
+
+	if entry != nil {
+		item.DisplayName = entry.DisplayName
+		item.Platform = entry.Platform
+		item.Platforms = append([]string(nil), entry.Platforms...)
+		item.Family = entry.Family
+		item.ReleaseDate = entry.ReleaseDate
+		item.DefaultChannelID = entry.DefaultChannelID
+		item.DefaultChannelName = entry.DefaultChannelName
+		item.ChannelPrices = make([]AccountChannelPriceEntry, len(entry.Channels))
+		for i, ch := range entry.Channels {
+			origPricing := ch.Pricing
+			chCopy := ch
+			if chCopy.IsDefault {
+				if hasDefaultOv {
+					chCopy.Pricing = defaultOv.Custom
+					chCopy.IsLocked = defaultOv.Locked
+					chCopy.IsOverridden = defaultIsCustom
+					origCopy := origPricing
+					chCopy.SyncedPricing = &origCopy
+					t := defaultOv.UpdatedAt
+					chCopy.UpdatedAt = &t
+				}
+			} else if cm := s.overrides.Channels[chCopy.ChannelID]; cm != nil {
+				if chOv, ok := cm[modelID]; ok {
+					chIsCustom := chOv.IsCustom || !chOv.Locked
+					chCopy.Pricing = chOv.Custom
+					chCopy.IsLocked = chOv.Locked
+					chCopy.IsOverridden = chIsCustom
+					origCopy := origPricing
+					chCopy.SyncedPricing = &origCopy
+					t := chOv.UpdatedAt
+					chCopy.UpdatedAt = &t
+				}
+			}
+			if chCopy.IsOverridden {
+				item.ChannelOverrideCount++
+			}
+			if chCopy.IsLocked {
+				item.LockedChannelCount++
+			}
+			item.ChannelPrices[i] = chCopy
+		}
+		defaultPricing = entry.DefaultPricing
 	}
 
-	// Resolve default pricing first
-	defaultPricing, defaultSource, defProvID, defProvName, defRawID, defCandKey, defUpdatedAt := s.resolveScopeItemPricingLocked(grp, defaultSel, hasDefaultSel, false)
+	if hasDefaultOv {
+		defaultPricing = defaultOv.Custom
+		if defaultIsCustom {
+			defaultSource = "default_custom"
+		}
+		t := defaultOv.UpdatedAt
+		defaultUpdatedAt = &t
+		if defaultOv.Custom.DisplayName != "" {
+			item.DisplayName = defaultOv.Custom.DisplayName
+		}
+	}
 
 	if groupID > 0 {
-		grpSel, hasGrpSel := activeGroupOverrides[modelID]
-		if hasGrpSel {
-			effPricing, effSource, provID, provName, rawID, candKey, updatedAt := s.resolveScopeItemPricingLocked(grp, grpSel, true, true)
-			item.EffectivePricing = effPricing
+		if grpOv, ok := activeGroupOverrides[modelID]; ok {
+			t := grpOv.UpdatedAt
+			item.EffectivePricing = grpOv.Custom
 			item.DefaultPricing = &defaultPricing
-			item.Source = effSource
+			item.Source = "group_custom"
 			item.IsGroupOverridden = true
-			item.ActiveProviderID = provID
-			item.ActiveProviderName = provName
-			item.ActiveRawModelID = rawID
-			item.ActiveCandidateKey = candKey
-			item.UpdatedAt = updatedAt
-			if effPricing.DisplayName != "" {
-				item.DisplayName = effPricing.DisplayName
+			item.UpdatedAt = &t
+			if grpOv.Platform != "" && entry == nil {
+				item.Platform = grpOv.Platform
+				item.Platforms = []string{grpOv.Platform}
+			}
+			if grpOv.Custom.DisplayName != "" {
+				item.DisplayName = grpOv.Custom.DisplayName
 			}
 			return item
 		}
-		// Inherit default price when group has no custom setting
 		item.EffectivePricing = defaultPricing
 		item.DefaultPricing = &defaultPricing
 		item.Source = "inherited_default"
 		item.IsGroupOverridden = false
-		item.ActiveProviderID = defProvID
-		item.ActiveProviderName = defProvName
-		item.ActiveRawModelID = defRawID
-		item.ActiveCandidateKey = defCandKey
-		item.UpdatedAt = defUpdatedAt
-		if defaultPricing.DisplayName != "" {
-			item.DisplayName = defaultPricing.DisplayName
-		}
+		item.UpdatedAt = defaultUpdatedAt
 		return item
 	}
 
 	item.EffectivePricing = defaultPricing
 	item.Source = defaultSource
-	item.ActiveProviderID = defProvID
-	item.ActiveProviderName = defProvName
-	item.ActiveRawModelID = defRawID
-	item.ActiveCandidateKey = defCandKey
-	item.UpdatedAt = defUpdatedAt
-	if defaultPricing.DisplayName != "" {
-		item.DisplayName = defaultPricing.DisplayName
-	}
+	item.UpdatedAt = defaultUpdatedAt
 	return item
-}
-
-func (s *PricingService) resolveScopeItemPricingLocked(
-	grp *ModelsDevModelGroup,
-	sel ModelPricingSelection,
-	hasSel bool,
-	isGroup bool,
-) (TokenPricingPerMillion, string, string, string, string, string, *time.Time) {
-	if hasSel {
-		updated := sel.UpdatedAt
-		if sel.Mode == PricingSelectionModeCustom && sel.Custom != nil {
-			source := "default_custom"
-			if isGroup {
-				source = "group_custom"
-			}
-			return *sel.Custom, source, "custom", "Custom", "", "", &updated
-		}
-		if sel.Mode == PricingSelectionModeProvider && grp != nil {
-			cand := grp.candidatesByKey[sel.CandidateKey]
-			if cand == nil && sel.ProviderID != "" {
-				for i := range grp.Candidates {
-					if strings.EqualFold(grp.Candidates[i].ProviderID, sel.ProviderID) {
-						cand = &grp.Candidates[i]
-						break
-					}
-				}
-			}
-			if cand != nil {
-				source := "default_provider"
-				if isGroup {
-					source = "group_provider"
-				}
-				return cand.Pricing, source, cand.ProviderID, cand.ProviderName, cand.RawModelID, cand.CandidateKey, &updated
-			}
-		}
-	}
-	if grp != nil && len(grp.Candidates) > 0 {
-		c := grp.Candidates[0]
-		return c.Pricing, "default_auto", c.ProviderID, c.ProviderName, c.RawModelID, c.CandidateKey, nil
-	}
-	return TokenPricingPerMillion{}, "default_auto", "", "", "", "", nil
 }
 
 func matchesPricingSearch(item ModelPricingListItem, needle string) bool {
 	if strings.Contains(item.ModelID, needle) ||
 		strings.Contains(strings.ToLower(item.DisplayName), needle) ||
 		strings.Contains(strings.ToLower(item.Family), needle) ||
-		strings.Contains(strings.ToLower(item.ActiveProviderID), needle) ||
-		strings.Contains(strings.ToLower(item.ActiveProviderName), needle) {
+		strings.Contains(strings.ToLower(item.Platform), needle) ||
+		strings.Contains(strings.ToLower(item.DefaultChannelName), needle) {
 		return true
 	}
-	for _, c := range item.Candidates {
-		if strings.Contains(strings.ToLower(c.RawModelID), needle) ||
-			strings.Contains(strings.ToLower(c.ProviderID), needle) ||
-			strings.Contains(strings.ToLower(c.ProviderName), needle) {
+	for _, ch := range item.ChannelPrices {
+		if strings.Contains(strings.ToLower(ch.ChannelID), needle) ||
+			strings.Contains(strings.ToLower(ch.ChannelName), needle) ||
+			strings.Contains(strings.ToLower(ch.RawModelID), needle) {
 			return true
 		}
 	}
@@ -1802,10 +2308,10 @@ func startsAtWordBoundary(text, needle string) bool {
 	return false
 }
 
-// --- Runtime Billing Lookups ---
+// --- Runtime Billing Lookups (Group > Matched Account Channel > Default Channel) ---
 
-// GetModelPricingForGroup returns a group-specific pricing override/selection if configured.
-// Returns (nil, false) when the group has no separate override (caller should fall back to default pricing).
+// GetModelPricingForGroup returns a system group's custom pricing override if configured.
+// Returns (nil, false) when the group has no separate override.
 func (s *PricingService) GetModelPricingForGroup(groupID int64, modelName string) (*CatalogModelPricing, bool) {
 	if s == nil || groupID <= 0 || strings.TrimSpace(modelName) == "" {
 		return nil, false
@@ -1822,21 +2328,112 @@ func (s *PricingService) GetModelPricingForGroup(groupID int64, modelName string
 	candidates := s.buildModelLookupCandidates(modelLower)
 	for _, cand := range candidates {
 		norm := NormalizeOriginalModelID(cand)
-		if sel, ok := gm[norm]; ok {
-			if cat := s.resolveSelectionToCatalogLocked(norm, sel); cat != nil {
-				return cat, true
-			}
+		if ov, ok := gm[norm]; ok {
+			return overrideToCatalog(ov), true
 		}
-		if sel, ok := gm[cand]; ok {
-			if cat := s.resolveSelectionToCatalogLocked(cand, sel); cat != nil {
-				return cat, true
-			}
+		if ov, ok := gm[cand]; ok {
+			return overrideToCatalog(ov), true
 		}
 	}
 	return nil, false
 }
 
-// GetModelPricing 获取模型默认价格（走 models.dev 缓存 + 默认切换/自定义覆盖）
+// GetModelPricingForProvider looks up the pricing for a specific account-type matched
+// models.dev channel (e.g. amazon-bedrock, google-vertex-anthropic, google-vertex,
+// opencode-go, cline-pass, zhipuai-coding-plan, etc.).
+//
+// If providerID matches the model's default channel AND the admin has customized the global
+// default price for that model, this returns (nil, false) so the default custom price applies.
+// Distinct account channels (e.g. amazon-bedrock vs default anthropic) always return their
+// channel-specific price (Priority: Group > Matched Channel > Default Channel).
+func (s *PricingService) GetModelPricingForProvider(providerID, modelName, rawUpstreamModel string) (*CatalogModelPricing, bool) {
+	providerID = strings.ToLower(strings.TrimSpace(providerID))
+	if s == nil || providerID == "" || strings.TrimSpace(modelName) == "" {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rawLower := strings.ToLower(strings.TrimSpace(rawUpstreamModel))
+	modelLower := strings.ToLower(strings.TrimSpace(modelName))
+	lookupCandidates := s.buildModelLookupCandidates(modelLower)
+
+	findEntry := func() *SupportedModelEntry {
+		for _, cand := range lookupCandidates {
+			if e := s.models[cand]; e != nil {
+				return e
+			}
+			if norm := NormalizeOriginalModelID(cand); norm != "" {
+				if e := s.models[norm]; e != nil {
+					return e
+				}
+			}
+		}
+		baseName := s.extractBaseName(NormalizeOriginalModelID(lookupCandidates[0]))
+		if baseName != "" {
+			if e := s.models[baseName]; e != nil {
+				return e
+			}
+		}
+		return nil
+	}
+
+	entry := findEntry()
+
+	// 1. Explicit per-channel custom override or locked price snapshot always takes precedence for this channel.
+	if chMap := s.overrides.Channels[providerID]; len(chMap) > 0 {
+		if entry != nil {
+			if ov, ok := chMap[entry.ModelID]; ok {
+				return overrideToCatalog(ov), true
+			}
+		}
+		for _, cand := range lookupCandidates {
+			if norm := NormalizeOriginalModelID(cand); norm != "" {
+				if ov, ok := chMap[norm]; ok {
+					return overrideToCatalog(ov), true
+				}
+			}
+			if ov, ok := chMap[cand]; ok {
+				return overrideToCatalog(ov), true
+			}
+		}
+	}
+
+	if entry == nil {
+		return nil, false
+	}
+
+	// 2. If this account uses the model's default channel and the admin customized or locked the default price,
+	// let default custom/locked price take precedence cleanly.
+	if providerID == entry.DefaultChannelID {
+		if _, hasDefaultOverride := s.overrides.Default[entry.ModelID]; hasDefaultOverride {
+			return nil, false
+		}
+	}
+
+	// 3. Exact raw upstream model ID match inside this channel (e.g. Bedrock regional vs global!)
+	if rawLower != "" {
+		if rawMap := entry.rawByChannel[providerID]; rawMap != nil {
+			if cat, ok := rawMap[rawLower]; ok && cat != nil {
+				return cat, true
+			}
+		}
+	}
+	if rawMap := entry.rawByChannel[providerID]; rawMap != nil {
+		if cat, ok := rawMap[modelLower]; ok && cat != nil {
+			return cat, true
+		}
+	}
+
+	// 4. Canonical channel price entry for this provider
+	if ch := entry.channelByID[providerID]; ch != nil && ch.catalog != nil {
+		return ch.catalog, true
+	}
+
+	return nil, false
+}
+
+// GetModelPricing 获取模型默认渠道价格（全局自定义覆盖 > models.dev 默认渠道价）
 func (s *PricingService) GetModelPricing(modelName string) *CatalogModelPricing {
 	if s == nil || strings.TrimSpace(modelName) == "" {
 		return nil
@@ -1847,21 +2444,15 @@ func (s *PricingService) GetModelPricing(modelName string) *CatalogModelPricing 
 	modelLower := strings.ToLower(strings.TrimSpace(modelName))
 	lookupCandidates := s.buildModelLookupCandidates(modelLower)
 
-	// 1~3. 确定性识别（精确名 / 规范化原始 ID / 已知拼写变体 / 去掉日期版本后缀）
 	if pricing := s.lookupIdentifiedModelPricingLocked(lookupCandidates); pricing != nil {
 		return pricing
 	}
-
-	// 4. 基于模型系列在缓存目录中匹配（Claude）
 	if pricing := s.matchByModelFamilyLocked(lookupCandidates[0]); pricing != nil {
 		return pricing
 	}
-
-	// 5. OpenAI 模型在缓存目录中的变体回退
 	if strings.HasPrefix(lookupCandidates[0], "gpt-") {
 		return s.matchOpenAIModelLocked(lookupCandidates[0])
 	}
-
 	return nil
 }
 
@@ -1885,7 +2476,6 @@ func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []s
 		return nil
 	}
 
-	// 1. 精确匹配（包含原始模型 ID 规范化结果）
 	for _, candidate := range lookupCandidates {
 		if candidate == "" {
 			continue
@@ -1900,7 +2490,6 @@ func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []s
 		}
 	}
 
-	// 2. 常见点号/连字符拼写变体
 	for _, candidate := range lookupCandidates {
 		for _, variant := range []string{
 			strings.ReplaceAll(candidate, "-4-5-", "-4.5-"),
@@ -1914,7 +2503,6 @@ func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []s
 		}
 	}
 
-	// 3. 去掉日期/版本后缀后匹配（排序键保证确定性）
 	baseName := s.extractBaseName(NormalizeOriginalModelID(lookupCandidates[0]))
 	if baseName != "" {
 		if pricing, ok := s.effectiveDefaultData[baseName]; ok {
@@ -2222,7 +2810,7 @@ func (s *PricingService) generateOpenAIModelVariants(model string, datePattern *
 	return variants
 }
 
-// ListModelNamesByProvider returns all normalized original model IDs in the models.dev cache
+// ListModelNamesByProvider returns all normalized original model IDs in the supported models.dev cache
 // belonging to the given provider ID (case-insensitive, sorted alphabetically).
 func (s *PricingService) ListModelNamesByProvider(provider string) []string {
 	if s == nil {
@@ -2238,7 +2826,6 @@ func (s *PricingService) ListModelNamesByProvider(provider string) []string {
 		return out
 	}
 
-	// Also support provider aliases if needed (e.g. "gemini" -> "google", "moonshot" -> "moonshotai", "zhipu" -> "zhipuai")
 	aliasMap := map[string]string{
 		"gemini":   "google",
 		"moonshot": "moonshotai",

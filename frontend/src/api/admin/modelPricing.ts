@@ -1,9 +1,6 @@
-/**
- * Admin Model Pricing API endpoints (models.dev sync, cached provider switching,
- * and default / per-group pricing overrides).
- */
-
 import { apiClient } from '../client'
+
+export type PricingSyncOverwriteMode = 'skip_locked' | 'overwrite_all'
 
 export interface PricingSyncConfig {
   auto_sync_enabled: boolean
@@ -12,19 +9,24 @@ export interface PricingSyncConfig {
 }
 
 export interface PricingSyncMetadata {
-  last_sync_at?: string | null
+  last_sync_at?: string
   last_sync_status: 'never' | 'success' | 'failed' | string
   last_sync_error?: string
   cache_hash?: string
-  provider_count: number
-  model_group_count: number
+  channel_count: number
+  model_count: number
   raw_entry_count: number
+  last_skipped_locked?: number
+  last_overwritten_count?: number
 }
 
 export interface PricingSyncStatus {
   config: PricingSyncConfig
   meta: PricingSyncMetadata
   default_override_count: number
+  channel_override_count: number
+  locked_channel_count: number
+  unlocked_custom_count: number
   group_override_counts: Record<string, number>
   cache_loaded: boolean
 }
@@ -36,68 +38,58 @@ export interface TokenPricingPerMillion {
   cache_read_per_million: number
   cache_write_per_million: number
   cache_write_1h_per_million?: number | null
+  cache_storage_per_million_per_hour?: number
   long_context_threshold?: number
   long_context_input_multiplier?: number
   long_context_output_multiplier?: number
 }
 
-export interface ModelsDevCandidate {
-  candidate_key: string
-  provider_id: string
-  provider_name: string
+export interface AccountChannelPriceEntry {
+  channel_id: string
+  channel_name: string
+  platform: string
   raw_model_id: string
-  display_name: string
-  family?: string
-  release_date?: string
-  status?: string
-  context_limit?: number
-  output_limit?: number
-  is_recommended: boolean
+  is_default: boolean
+  is_overridden: boolean
+  is_locked: boolean
   pricing: TokenPricingPerMillion
+  synced_pricing?: TokenPricingPerMillion
+  updated_at?: string
 }
 
-export interface ModelsDevProviderSummary {
+export interface SupportedPlatformSummary {
   id: string
   name: string
   model_count: number
 }
 
-export type ModelPricingItemSource =
+export type ModelPricingSource =
   | 'default_auto'
-  | 'default_provider'
   | 'default_custom'
   | 'inherited_default'
-  | 'group_provider'
   | 'group_custom'
 
 export interface ModelPricingListItem {
   model_id: string
   display_name: string
+  platform: string
+  platforms: string[]
   family?: string
   release_date?: string
-  source: ModelPricingItemSource
+  source: ModelPricingSource
   is_group_overridden: boolean
   is_default_modified: boolean
+  is_default_locked: boolean
   is_custom_only: boolean
-  active_provider_id?: string
-  active_provider_name?: string
-  active_raw_model_id?: string
-  active_candidate_key?: string
+  default_channel_id?: string
+  default_channel_name?: string
+  channel_prices: AccountChannelPriceEntry[]
   effective_pricing: TokenPricingPerMillion
-  default_pricing?: TokenPricingPerMillion | null
-  candidates: ModelsDevCandidate[]
-  candidate_count: number
+  default_pricing?: TokenPricingPerMillion
   group_override_count: number
-  updated_at?: string | null
-}
-
-export interface ModelPricingListParams {
-  group_id?: number
-  search?: string
-  provider?: string
-  filter?: 'all' | 'overridden' | 'custom' | 'multi_provider'
-  page?: number
-  page_size?: number
+  channel_override_count: number
+  locked_channel_count: number
+  updated_at?: string
 }
 
 export interface ModelPricingListResult {
@@ -105,70 +97,112 @@ export interface ModelPricingListResult {
   total: number
   page: number
   page_size: number
-  providers: ModelsDevProviderSummary[]
+  group_platform?: string
+  platforms: SupportedPlatformSummary[]
 }
 
-export interface SelectCachedProviderRequest {
+export interface ModelPricingListParams {
   group_id?: number | null
-  model_id: string
-  candidate_key: string
+  platform?: string
+  search?: string
+  filter?: 'all' | 'overridden' | 'custom' | 'locked'
+  page?: number
+  page_size?: number
 }
 
-export interface UpsertModelPricingOverrideRequest extends TokenPricingPerMillion {
+export interface UpsertModelPricingOverrideRequest {
   group_id?: number | null
+  channel_id?: string
   model_id: string
+  platform?: string
+  display_name?: string
+  locked?: boolean
+  input_per_million: number
+  output_per_million: number
+  cache_read_per_million: number
+  cache_write_per_million: number
+  cache_write_1h_per_million?: number | null
+  long_context_threshold?: number
+  long_context_input_multiplier?: number
+  long_context_output_multiplier?: number
 }
 
-export async function getStatus(): Promise<PricingSyncStatus> {
-  const { data } = await apiClient.get<PricingSyncStatus>('/admin/model-pricing/status')
-  return data
+export interface ResetOverrideScope {
+  groupId?: number | null
+  channelId?: string
 }
 
-export async function updateSyncConfig(payload: PricingSyncConfig): Promise<PricingSyncStatus> {
-  const { data } = await apiClient.put<PricingSyncStatus>('/admin/model-pricing/sync-config', payload)
-  return data
-}
+export const modelPricingAPI = {
+  async getStatus(): Promise<PricingSyncStatus> {
+    const { data } = await apiClient.get<PricingSyncStatus>('/admin/model-pricing/status')
+    return data
+  },
 
-export async function syncNow(): Promise<PricingSyncStatus> {
-  const { data } = await apiClient.post<PricingSyncStatus>('/admin/model-pricing/sync')
-  return data
-}
+  async updateSyncConfig(payload: PricingSyncConfig): Promise<PricingSyncStatus> {
+    const { data } = await apiClient.put<PricingSyncStatus>(
+      '/admin/model-pricing/sync-config',
+      payload
+    )
+    return data
+  },
 
-export async function listModels(params: ModelPricingListParams = {}): Promise<ModelPricingListResult> {
-  const { data } = await apiClient.get<ModelPricingListResult>('/admin/model-pricing/models', {
-    params
-  })
-  return data
-}
+  async syncNow(
+    overwriteMode: PricingSyncOverwriteMode = 'skip_locked'
+  ): Promise<PricingSyncStatus> {
+    const { data } = await apiClient.post<PricingSyncStatus>('/admin/model-pricing/sync', {
+      overwrite_mode: overwriteMode
+    })
+    return data
+  },
 
-export async function selectProvider(payload: SelectCachedProviderRequest): Promise<{ message: string }> {
-  const { data } = await apiClient.put<{ message: string }>('/admin/model-pricing/select-provider', payload)
-  return data
-}
+  async listModels(params: ModelPricingListParams = {}): Promise<ModelPricingListResult> {
+    const query: Record<string, string | number> = {}
+    if (params.group_id && params.group_id > 0) query.group_id = params.group_id
+    if (params.platform && params.platform !== 'all') query.platform = params.platform
+    if (params.search?.trim()) query.search = params.search.trim()
+    if (params.filter && params.filter !== 'all') query.filter = params.filter
+    if (params.page) query.page = params.page
+    if (params.page_size) query.page_size = params.page_size
 
-export async function upsertOverride(payload: UpsertModelPricingOverrideRequest): Promise<{ message: string }> {
-  const { data } = await apiClient.put<{ message: string }>('/admin/model-pricing/override', payload)
-  return data
-}
+    const { data } = await apiClient.get<ModelPricingListResult>('/admin/model-pricing/models', {
+      params: query
+    })
+    return data
+  },
 
-export async function resetOverride(modelId: string, groupId?: number | null): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>('/admin/model-pricing/override', {
-    params: {
+  async upsertOverride(payload: UpsertModelPricingOverrideRequest): Promise<{ message: string }> {
+    const { data } = await apiClient.put<{ message: string }>(
+      '/admin/model-pricing/override',
+      payload
+    )
+    return data
+  },
+
+  async resetOverride(
+    modelId: string,
+    scope: ResetOverrideScope = {}
+  ): Promise<{ message: string }> {
+    const params: Record<string, string | number> = { model_id: modelId }
+    if (scope.groupId && scope.groupId > 0) params.group_id = scope.groupId
+    if (scope.channelId) params.channel_id = scope.channelId
+    const { data } = await apiClient.delete<{ message: string }>('/admin/model-pricing/override', {
+      params
+    })
+    return data
+  },
+
+  async setChannelLock(
+    modelId: string,
+    channelId: string,
+    locked: boolean
+  ): Promise<{ message: string }> {
+    const { data } = await apiClient.put<{ message: string }>('/admin/model-pricing/lock', {
       model_id: modelId,
-      ...(groupId && groupId > 0 ? { group_id: groupId } : {})
-    }
-  })
-  return data
-}
-
-const modelPricingAPI = {
-  getStatus,
-  updateSyncConfig,
-  syncNow,
-  listModels,
-  selectProvider,
-  upsertOverride,
-  resetOverride
+      channel_id: channelId,
+      locked
+    })
+    return data
+  }
 }
 
 export default modelPricingAPI

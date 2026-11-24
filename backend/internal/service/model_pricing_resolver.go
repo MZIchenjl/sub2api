@@ -9,10 +9,11 @@ import (
 
 // PricingSource 定价来源标识
 const (
-	PricingSourceGroup     = "group"
-	PricingSourceChannel   = "channel"
-	PricingSourceModelsDev = "models_dev"
-	PricingSourceFallback  = "fallback"
+	PricingSourceGroup          = "group"
+	PricingSourceChannel        = "channel"
+	PricingSourceAccountChannel = "account_channel"
+	PricingSourceModelsDev      = "models_dev"
+	PricingSourceFallback       = "fallback"
 )
 
 // ResolvedPricing 统一定价解析结果
@@ -20,7 +21,7 @@ type ResolvedPricing struct {
 	// Mode 计费模式
 	Mode BillingMode
 
-	// Token 模式：基础定价（来自 LiteLLM 或 fallback）
+	// Token 模式：基础定价（来自 models.dev 或 fallback）
 	BasePricing *ModelPricing
 
 	// Token 模式：区间定价列表（如有，覆盖 BasePricing 中的对应字段）
@@ -32,8 +33,11 @@ type ResolvedPricing struct {
 	// 按次/图片模式：默认价格（未命中层级时使用）
 	DefaultPerRequestPrice float64
 
-	// 来源标识
-	Source string // "channel", "litellm", "fallback"
+	// 来源标识: "group" | "channel" | "account_channel" | "models_dev" | "fallback"
+	Source string
+
+	// MatchedChannelProvider 记录账户类型自动匹配的 models.dev 渠道 ID（如 amazon-bedrock / google-vertex）
+	MatchedChannelProvider string
 
 	// 是否支持缓存细分
 	SupportsCacheBreakdown bool
@@ -45,7 +49,7 @@ type ResolvedPricing struct {
 }
 
 // ModelPricingResolver 统一模型定价解析器。
-// 解析链：Group → Channel → LiteLLM → Fallback。
+// 解析链：分组单独设置价格 → 对应渠道价格（系统渠道定价 / 账户类型自动匹配渠道价）→ 默认渠道价格 → Fallback。
 type ModelPricingResolver struct {
 	channelService *ChannelService
 	billingService *BillingService
@@ -61,24 +65,39 @@ func NewModelPricingResolver(channelService *ChannelService, billingService *Bil
 
 // PricingInput 定价解析输入
 type PricingInput struct {
-	Model   string
-	GroupID *int64 // nil 表示不检查渠道
-	Group   *Group
+	Model         string
+	GroupID       *int64 // nil 表示不检查渠道
+	Group         *Group
+	Account       *Account // 可选：用于按账户类型自动匹配对应渠道价格（如 Bedrock / Vertex / Coding Plan）
+	UpstreamModel string   // 可选：上游实际模型 ID（用于 Bedrock 区域/global 精确匹配）
 }
 
 // Resolve 解析模型定价。
-// 解析链：分组模型定价覆盖（模型定价页按分组配置 / Group.ModelPricing）→ Channel → models.dev 默认价格 → Fallback。
-// 没有单独设置价格的分组自动使用默认价格。
+// 解析链：
+//  1. 分组单独设置的价格（模型定价页分组覆盖 / Group.ModelPricing）
+//  2. 对应渠道价格（绑定渠道 Channel.ModelPricing > 按账户类型自动匹配的 models.dev 渠道价）
+//  3. 默认渠道价格（模型定价页默认自定义 > models.dev 默认渠道价 > Fallback）
 func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) *ResolvedPricing {
 	longContextPricingEnabled := input.Group == nil || input.Group.LongContextPricingEnabled
 
-	// 0. 优先检查模型定价管理中针对该分组单独配置的价格（切换缓存供应商或自定义价格）
 	var effectiveGroupID int64
 	if input.GroupID != nil && *input.GroupID > 0 {
 		effectiveGroupID = *input.GroupID
 	} else if input.Group != nil && input.Group.ID > 0 {
 		effectiveGroupID = input.Group.ID
 	}
+
+	groupPricing := matchGroupModelPricing(input.Group, input.Model)
+
+	// 1a. 若分组在 Group.ModelPricing 中显式配置了非 Token 模式（图片/按次/视频），保持与模型广场一致优先返回
+	if groupPricing != nil &&
+		(groupPricing.BillingMode == BillingModeImage || groupPricing.BillingMode == BillingModePerRequest || groupPricing.BillingMode == BillingModeVideo) {
+		resolved := r.resolveConfiguredPricing(groupPricing, input.Model, PricingSourceGroup)
+		resolved.longContextPricingEnabled = longContextPricingEnabled
+		return resolved
+	}
+
+	// 1b. 分组在模型定价管理中单独设置的 Token 价格
 	if effectiveGroupID > 0 && r.billingService != nil {
 		if groupCatalogPricing, ok := r.billingService.GetGroupCatalogModelPricing(effectiveGroupID, input.Model); ok && groupCatalogPricing != nil {
 			return &ResolvedPricing{
@@ -91,7 +110,8 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 		}
 	}
 
-	if groupPricing := matchGroupModelPricing(input.Group, input.Model); groupPricing != nil {
+	// 1c. 分组自身的 Token 价卡（Group.ModelPricing）
+	if groupPricing != nil {
 		// Group token cards only override the first-tier / flat rates.
 		// Long-context ladders come from official presets, gated by the checkbox.
 		if groupPricing.BillingMode == "" || groupPricing.BillingMode == BillingModeToken {
@@ -104,9 +124,10 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 		return resolved
 	}
 
+	// 2a. 对应系统渠道定价（Channel.ModelPricing）
 	var chPricing *ChannelModelPricing
-	if input.GroupID != nil && r.channelService != nil {
-		chPricing = r.lookupChannelPricingNormalized(ctx, *input.GroupID, input.Model)
+	if effectiveGroupID > 0 && r.channelService != nil {
+		chPricing = r.lookupChannelPricingNormalized(ctx, effectiveGroupID, input.Model)
 		if chPricing != nil {
 			mode := chPricing.BillingMode
 			if mode == "" {
@@ -125,7 +146,23 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 		}
 	}
 
-	// 1. 获取基础定价
+	// 2b. 对应账户类型自动匹配的 models.dev 渠道价（无系统渠道自定义价时生效）
+	if chPricing == nil && input.Account != nil && r.billingService != nil {
+		if providerID := ResolveAccountPricingProvider(input.Account, input.Model); providerID != "" {
+			if accountChPricing, ok := r.billingService.GetAccountChannelModelPricing(providerID, input.Model, input.UpstreamModel); ok && accountChPricing != nil {
+				return &ResolvedPricing{
+					Mode:                      BillingModeToken,
+					BasePricing:               accountChPricing,
+					Source:                    PricingSourceAccountChannel,
+					MatchedChannelProvider:    providerID,
+					SupportsCacheBreakdown:    accountChPricing.SupportsCacheBreakdown,
+					longContextPricingEnabled: longContextPricingEnabled,
+				}
+			}
+		}
+	}
+
+	// 3. 默认渠道价格（models.dev 默认价 / 默认自定义价 / Fallback）
 	basePricing, source := r.resolveBasePricing(input.Model)
 
 	resolved := &ResolvedPricing{
@@ -136,13 +173,11 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 	}
 	resolved.longContextPricingEnabled = longContextPricingEnabled
 
-	// 2. 如果有 GroupID，尝试渠道覆盖
+	// 合并系统渠道的 Token 覆盖（含区间、分时、推理倍率等）
 	if chPricing != nil {
 		resolved.Source = PricingSourceChannel
 		resolved.channelPricing = chPricing
 		r.applyTokenOverrides(chPricing, resolved)
-	} else if input.GroupID != nil && r.channelService != nil {
-		r.applyChannelOverrides(ctx, *input.GroupID, input.Model, resolved)
 	}
 
 	return resolved

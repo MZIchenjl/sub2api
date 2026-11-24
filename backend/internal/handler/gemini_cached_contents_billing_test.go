@@ -317,12 +317,12 @@ func newCachedBillingEnv(t *testing.T, balance float64, accountIDs ...int64) *ca
 	pricing := service.NewPricingService(cfg, nil)
 	require.NoError(t, pricing.Initialize())
 	t.Cleanup(pricing.Stop)
-	require.NoError(t, pricing.UpsertCustomPricing(context.Background(), nil, "gemini-2.5-pro", service.TokenPricingPerMillion{
+	require.NoError(t, pricing.UpsertCustomPricing(context.Background(), nil, "gemini-2.5-pro", service.PlatformGemini, service.TokenPricingPerMillion{
 		InputPerMillion:               cachedBillingInputPrice * 1_000_000,
 		OutputPerMillion:              10,
 		CacheStoragePerMillionPerHour: cachedBillingStoragePrice * 1_000_000,
 	}))
-	require.NoError(t, pricing.UpsertCustomPricing(context.Background(), nil, "gemini-alias", service.TokenPricingPerMillion{
+	require.NoError(t, pricing.UpsertCustomPricing(context.Background(), nil, "gemini-alias", service.PlatformGemini, service.TokenPricingPerMillion{
 		InputPerMillion:               cachedBillingInputPrice * 1_000_000,
 		OutputPerMillion:              10,
 		CacheStoragePerMillionPerHour: cachedBillingAliasStoragePrice * 1_000_000,

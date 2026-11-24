@@ -4,8 +4,6 @@ package service
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -444,7 +442,7 @@ func TestDeepseekCustomPricingOverrideBypassOfficialPeakPolicy(t *testing.T) {
 			}
 		}
 	}`)
-	require.NoError(t, svc.UpsertCustomPricing(context.Background(), nil, "deepseek-flash", TokenPricingPerMillion{
+	require.NoError(t, svc.UpsertCustomPricing(context.Background(), nil, "deepseek-flash", PlatformDeepseek, TokenPricingPerMillion{
 		InputPerMillion:     2,
 		OutputPerMillion:    3,
 		CacheReadPerMillion: 0.4,

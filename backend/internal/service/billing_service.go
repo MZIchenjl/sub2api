@@ -1552,8 +1552,8 @@ func (s *BillingService) CacheStoragePricePerTokenHour(model string) float64 {
 	return builtinGeminiCacheStoragePrice(model)
 }
 
-// GetGroupCatalogModelPricing 返回指定分组在模型定价管理中单独配置的价格（自定义编辑或切换缓存供应商）。
-// 若该分组未单独设置该模型价格，返回 (nil, false)，由调用方回退到默认价格。
+// GetGroupCatalogModelPricing 返回指定分组在模型定价管理中单独配置的价格。
+// 若该分组未单独设置该模型价格，返回 (nil, false)，由调用方回退到对应渠道价/默认价。
 func (s *BillingService) GetGroupCatalogModelPricing(groupID int64, model string) (*ModelPricing, bool) {
 	if s == nil || s.pricingService == nil || groupID <= 0 {
 		return nil, false
@@ -1566,10 +1566,30 @@ func (s *BillingService) GetGroupCatalogModelPricing(groupID int64, model string
 	if !ok || catalogPricing == nil || catalogPricing.TokenPricingAbsent {
 		return nil, false
 	}
-	return s.catalogPricingToModelPricing(model, catalogPricing, timezone.Now()), true
+	return s.catalogPricingToModelPricing(model, catalogPricing, false, timezone.Now()), true
 }
 
-func (s *BillingService) catalogPricingToModelPricing(model string, catalogPricing *CatalogModelPricing, pricingAt time.Time) *ModelPricing {
+// GetAccountChannelModelPricing 返回按账户类型自动匹配的 models.dev 对应渠道价格
+// （例如 AWS Bedrock、Vertex AI、Coding Plan、OpenCode Go、Cline 等）。
+// 若该账户类型对应的渠道未收录该模型（或默认渠道已自定义覆盖），返回 (nil, false) 回退默认渠道价。
+func (s *BillingService) GetAccountChannelModelPricing(providerID, model, upstreamModel string) (*ModelPricing, bool) {
+	if s == nil || s.pricingService == nil || strings.TrimSpace(providerID) == "" {
+		return nil, false
+	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return nil, false
+	}
+	catalogPricing, ok := s.pricingService.GetModelPricingForProvider(providerID, model, upstreamModel)
+	if !ok || catalogPricing == nil || catalogPricing.TokenPricingAbsent {
+		return nil, false
+	}
+	// 仅对默认官方 DeepSeek 渠道（且未被自定义/锁定时）应用官方低谷价策略；第三方/独立渠道及自定义覆盖保留其价格。
+	forceDeepSeek := strings.EqualFold(strings.TrimSpace(providerID), "deepseek") && catalogPricing.Provider != "custom"
+	return s.catalogPricingToModelPricing(model, catalogPricing, forceDeepSeek, timezone.Now()), true
+}
+
+func (s *BillingService) catalogPricingToModelPricing(model string, catalogPricing *CatalogModelPricing, forceDeepSeekRates bool, pricingAt time.Time) *ModelPricing {
 	price5m := catalogPricing.CacheCreationInputTokenCost
 	price1h := catalogPricing.CacheCreationInputTokenCostAbove1hr
 	enableBreakdown := price1h > 0 && price1h > price5m
@@ -1594,7 +1614,7 @@ func (s *BillingService) catalogPricingToModelPricing(model string, catalogPrici
 		ImageInputPricePerToken:            catalogPricing.InputCostPerImageToken,
 		ImageCacheReadPricePerToken:        catalogPricing.CacheReadInputImageTokenCost,
 		ImageOutputPricePerToken:           catalogPricing.OutputCostPerImageToken,
-	}, true, pricingAt)
+	}, forceDeepSeekRates, pricingAt)
 }
 
 // getModelPricingAt 保留带计费时点的内部调用接口。DeepSeek 默认低谷价
@@ -1603,14 +1623,14 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 	// 标准化模型名称（转小写）
 	model = strings.ToLower(model)
 
-	// 1. 优先从动态价格服务（models.dev 缓存 + 全局默认覆盖）获取
+	// 1. 优先从动态价格服务（models.dev 默认渠道 + 全局自定义覆盖）获取
 	if s.pricingService != nil {
 		catalogPricing := s.pricingService.GetModelPricing(model)
 		if catalogPricing != nil && catalogPricing.TokenPricingAbsent {
 			catalogPricing = nil
 		}
 		if catalogPricing != nil {
-			return s.catalogPricingToModelPricing(model, catalogPricing, pricingAt), nil
+			return s.catalogPricingToModelPricing(model, catalogPricing, true, pricingAt), nil
 		}
 	}
 
@@ -1709,8 +1729,10 @@ func applyChannelTokenPriceOverrides(pricing *ModelPricing, channelPricing *Chan
 type CostInput struct {
 	Ctx                       context.Context
 	Model                     string
-	GroupID                   *int64 // 用于渠道定价查找
+	GroupID                   *int64 // 用于分组与渠道定价查找
 	Group                     *Group
+	Account                   *Account // 用于按账户类型自动匹配对应渠道价
+	UpstreamModel             string   // 上游实际模型 ID（用于 Bedrock 区域/global 精确匹配）
 	Tokens                    UsageTokens
 	RequestCount              int     // 按次计费时使用
 	UsageUnits                float64 // 音频等连续计量单位（分钟/小时/百万字符）
@@ -1748,9 +1770,11 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 	resolved := input.Resolved
 	if resolved == nil {
 		resolved = input.Resolver.Resolve(input.Ctx, PricingInput{
-			Model:   input.Model,
-			GroupID: input.GroupID,
-			Group:   input.Group,
+			Model:         input.Model,
+			GroupID:       input.GroupID,
+			Group:         input.Group,
+			Account:       input.Account,
+			UpstreamModel: input.UpstreamModel,
 		})
 	}
 

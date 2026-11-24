@@ -49,10 +49,13 @@
         v-for="(row, index) in sortedData"
         :key="resolveRowKey(row, index)"
         class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900"
-        :class="{
-          'cursor-pointer': clickableRows,
-          'border-primary-300 bg-primary-50/40 dark:border-primary-700 dark:bg-primary-900/10': selectable && isRowSelected(row, index)
-        }"
+        :class="[
+          {
+            'cursor-pointer': clickableRows,
+            'border-primary-300 bg-primary-50/40 dark:border-primary-700 dark:bg-primary-900/10': selectable && isRowSelected(row, index)
+          },
+          rowClass ? rowClass(row) : ''
+        ]"
         @click="clickableRows && emit('rowClick', row)"
       >
         <div class="space-y-3">
@@ -214,10 +217,13 @@
             :data-index="item.index"
             :ref="item.measure ? measureElement : undefined"
             class="hover:bg-gray-50 dark:hover:bg-dark-800"
-            :class="{
-              'cursor-pointer': clickableRows,
-              'bg-primary-50/40 dark:bg-primary-900/10': selectable && isRowSelected(item.row, item.index)
-            }"
+            :class="[
+              {
+                'cursor-pointer': clickableRows,
+                'bg-primary-50/40 dark:bg-primary-900/10': selectable && isRowSelected(item.row, item.index)
+              },
+              rowClass ? rowClass(item.row) : ''
+            ]"
             @click="clickableRows && emit('rowClick', item.row)"
           >
             <td v-if="selectable" class="w-11 min-w-11 px-3 py-4 text-center">
@@ -438,6 +444,7 @@ interface Props {
   expandableActions?: boolean
   actionsCount?: number // 操作按钮总数，用于判断是否需要展开功能
   rowKey?: string | ((row: any) => string | number)
+  rowClass?: (row: any) => string
   /**
    * Default sort configuration (only applied when there is no persisted sort state)
    */

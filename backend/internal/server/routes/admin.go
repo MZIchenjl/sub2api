@@ -811,9 +811,9 @@ func registerModelPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		pricing.PUT("/sync-config", h.Admin.ModelPricing.UpdateSyncConfig)
 		pricing.POST("/sync", h.Admin.ModelPricing.SyncNow)
 		pricing.GET("/models", h.Admin.ModelPricing.ListModels)
-		pricing.PUT("/select-provider", h.Admin.ModelPricing.SelectProvider)
 		pricing.PUT("/override", h.Admin.ModelPricing.UpsertOverride)
 		pricing.DELETE("/override", h.Admin.ModelPricing.ResetOverride)
+		pricing.PUT("/lock", h.Admin.ModelPricing.SetChannelLock)
 	}
 }
 
