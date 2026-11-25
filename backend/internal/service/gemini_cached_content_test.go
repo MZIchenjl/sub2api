@@ -351,11 +351,12 @@ func TestGeminiCachedContentPublicID(t *testing.T) {
 }
 
 func TestGeminiCachedContentStoragePricingAndSurcharge(t *testing.T) {
-	pricing := &PricingService{}
-	data, err := pricing.parsePricingData([]byte(`{"gemini-3.8-flash":{"litellm_provider":"gemini","input_cost_per_token":0.00000075,
-		"output_cost_per_token":0.00000375,"cache_read_input_token_cost":0.000000075,"cache_storage_cost_per_token_per_hour":0.0000005}}`))
-	require.NoError(t, err)
-	pricing.pricingData = data
+	pricing := newStubPricingServiceFromCatalogMap(map[string]*CatalogModelPricing{
+		"gemini-3.8-flash": {
+			Provider: "google", InputCostPerToken: 0.00000075, OutputCostPerToken: 0.00000375,
+			CacheReadInputTokenCost: 0.000000075, CacheStorageCostPerTokenPerHour: 0.0000005,
+		},
+	})
 	billing := NewBillingService(&config.Config{}, pricing)
 
 	price := billing.CacheStoragePricePerTokenHour("models/gemini-3.8-flash")
@@ -389,11 +390,12 @@ func TestGeminiCachedContentStoragePricingAndSurcharge(t *testing.T) {
 
 // Scenario: 上游端点价格倍数只放大 token 费用，显式缓存存储费按原价叠加。
 func TestUpstreamPriceMultiplierScalesTokenCostOnly(t *testing.T) {
-	pricing := &PricingService{}
-	data, err := pricing.parsePricingData([]byte(`{"gemini-3.7-flash":{"litellm_provider":"gemini","input_cost_per_token":0.00000075,
-		"output_cost_per_token":0.00000375,"cache_read_input_token_cost":0.000000075,"cache_storage_cost_per_token_per_hour":0.000001}}`))
-	require.NoError(t, err)
-	pricing.pricingData = data
+	pricing := newStubPricingServiceFromCatalogMap(map[string]*CatalogModelPricing{
+		"gemini-3.7-flash": {
+			Provider: "google", InputCostPerToken: 0.00000075, OutputCostPerToken: 0.00000375,
+			CacheReadInputTokenCost: 0.000000075, CacheStorageCostPerTokenPerHour: 0.000001,
+		},
+	})
 	gateway := &GatewayService{billingService: NewBillingService(&config.Config{}, pricing)}
 	groupID := int64(3)
 	apiKey := &APIKey{GroupID: &groupID, Group: &Group{ID: groupID, Hydrated: true}}
@@ -438,11 +440,12 @@ func TestUpstreamPriceMultiplierScalesTokenCostOnly(t *testing.T) {
 
 // 管理员配置的分组价/渠道价是最终价，多区域端点倍数只作用于默认模型价。
 func TestUpstreamPriceMultiplierSkipsConfiguredPricing(t *testing.T) {
-	pricing := &PricingService{}
-	data, err := pricing.parsePricingData([]byte(`{"gemini-3.7-flash":{"litellm_provider":"gemini","input_cost_per_token":0.00000075,
-		"output_cost_per_token":0.00000375,"cache_read_input_token_cost":0.000000075}}`))
-	require.NoError(t, err)
-	pricing.pricingData = data
+	pricing := newStubPricingServiceFromCatalogMap(map[string]*CatalogModelPricing{
+		"gemini-3.7-flash": {
+			Provider: "google", InputCostPerToken: 0.00000075, OutputCostPerToken: 0.00000375,
+			CacheReadInputTokenCost: 0.000000075,
+		},
+	})
 	billing := NewBillingService(&config.Config{}, pricing)
 	gateway := &GatewayService{billingService: billing, resolver: NewModelPricingResolver(nil, billing)}
 
@@ -490,12 +493,12 @@ func TestGeminiCachedContentStorageCostInAccountStats(t *testing.T) {
 		rulePrice   = 0.0000002
 	)
 	newPricing := func() *PricingService {
-		pricing := &PricingService{}
-		data, err := pricing.parsePricingData([]byte(`{"gemini-3.8-flash":{"litellm_provider":"gemini","input_cost_per_token":0.00000075,
-			"output_cost_per_token":0.00000375,"cache_storage_cost_per_token_per_hour":0.0000005}}`))
-		require.NoError(t, err)
-		pricing.pricingData = data
-		return pricing
+		return newStubPricingServiceFromCatalogMap(map[string]*CatalogModelPricing{
+			"gemini-3.8-flash": {
+				Provider: "google", InputCostPerToken: 0.00000075, OutputCostPerToken: 0.00000375,
+				CacheStorageCostPerTokenPerHour: 0.0000005,
+			},
+		})
 	}
 	officialInput := inputTokens * inputPrice
 

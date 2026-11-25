@@ -739,20 +739,14 @@ type TokenRefreshConfig struct {
 }
 
 type PricingConfig struct {
-	// 价格数据远程URL（默认使用LiteLLM镜像）
-	RemoteURL string `mapstructure:"remote_url"`
-	// 哈希校验文件URL
-	HashURL string `mapstructure:"hash_url"`
-	// 本地数据目录
+	// models.dev API 地址（默认 https://models.dev/api.json）
+	ModelsDevURL string `mapstructure:"models_dev_url"`
+	// 本地缓存数据目录
 	DataDir string `mapstructure:"data_dir"`
-	// 回退文件路径
-	FallbackFile string `mapstructure:"fallback_file"`
-	// 覆盖补丁文件路径（可选）：条目按字段浅合并覆盖目录/回退数据，优先级最高
-	OverrideFile string `mapstructure:"override_file"`
-	// 更新间隔（小时）
-	UpdateIntervalHours int `mapstructure:"update_interval_hours"`
-	// 哈希校验间隔（分钟）
-	HashCheckIntervalMinutes int `mapstructure:"hash_check_interval_minutes"`
+	// 是否启用定时自动同步（作为数据库未配置时的初始默认值）
+	AutoSyncEnabled bool `mapstructure:"auto_sync_enabled"`
+	// 自动同步间隔（小时，默认 24）
+	SyncIntervalHours int `mapstructure:"sync_interval_hours"`
 }
 
 type ServerConfig struct {
@@ -2201,7 +2195,7 @@ func setDefaults() {
 		"*.openai.azure.com",
 	})
 	viper.SetDefault("security.url_allowlist.pricing_hosts", []string{
-		"raw.githubusercontent.com",
+		"models.dev",
 	})
 	viper.SetDefault("security.url_allowlist.crs_hosts", []string{})
 	viper.SetDefault("security.url_allowlist.allow_private_hosts", true)
@@ -2438,14 +2432,11 @@ func setDefaults() {
 	viper.SetDefault("rate_limit.overload_cooldown_minutes", 10)
 	viper.SetDefault("rate_limit.oauth_401_cooldown_minutes", 10)
 
-	// Pricing - 从 model-price-repo main 分支同步模型定价和上下文窗口数据
-	viper.SetDefault("pricing.remote_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json")
-	viper.SetDefault("pricing.hash_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.sha256")
+	// Pricing - 从 models.dev 同步模型定价数据
+	viper.SetDefault("pricing.models_dev_url", "https://models.dev/api.json")
 	viper.SetDefault("pricing.data_dir", "./data")
-	viper.SetDefault("pricing.fallback_file", "./resources/model-pricing/model_prices_and_context_window.json")
-	viper.SetDefault("pricing.override_file", "")
-	viper.SetDefault("pricing.update_interval_hours", 24)
-	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
+	viper.SetDefault("pricing.auto_sync_enabled", true)
+	viper.SetDefault("pricing.sync_interval_hours", 24)
 
 	// 本地进程插件。插件必须由管理员手动上传，项目默认不携带任何插件能力。
 	viper.SetDefault("plugins.data_dir", "")

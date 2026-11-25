@@ -810,7 +810,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 计算费用
-	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	cost := s.calculateRecordUsageCostWithAccount(ctx, result, apiKey, account, billingModel, multiplier, imageMultiplier, pricingAt)
 	// response_model：按上游成功响应自报的模型计费（渠道显式开启才生效）。
 	// 采纳条件见 responseModelBillingDeclaration + hasIdentifiedResponseModelPricing
 	// + responseModelBillingAdoptable。任一条件不满足都静默回落基线，即开启本模式前的
@@ -822,7 +822,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		result.ImageCount > 0 || result.AudioUsage != nil || result.SearchCount > 0 || result.CacheStorageTokenHours > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, strings.TrimSpace(billingModel)) {
 		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(ctx, responseModel, apiKey); identified {
-			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
+			responseCost := s.calculateRecordUsageCostWithAccount(ctx, result, apiKey, account, responseModel, multiplier, imageMultiplier, pricingAt)
 			baselineChannelPriced := s.resolveChannelPricing(ctx, billingModel, apiKey) != nil
 			if responseModelBillingAdoptable(cost, responseCost, baselineChannelPriced, responseChannelPriced) {
 				// billingModel 到此为止只是定价查表的入参，后续流程只消费 cost，
@@ -1025,11 +1025,25 @@ func applyUpstreamPriceFactor(cost *CostBreakdown, result *ForwardResult) {
 	applyCostBreakdownMultiplier(cost, result.upstreamPriceFactor())
 }
 
-// calculateRecordUsageCost 根据请求类型计算费用。
+// calculateRecordUsageCost 根据请求类型计算费用（无账户上下文时的便捷入口）。
 func (s *GatewayService) calculateRecordUsageCost(
 	ctx context.Context,
 	result *ForwardResult,
 	apiKey *APIKey,
+	billingModel string,
+	multiplier float64,
+	imageMultiplier float64,
+	pricingAt time.Time,
+) *CostBreakdown {
+	return s.calculateRecordUsageCostWithAccount(ctx, result, apiKey, nil, billingModel, multiplier, imageMultiplier, pricingAt)
+}
+
+// calculateRecordUsageCostWithAccount 根据请求类型计算费用，支持按账户类型自动匹配对应渠道价。
+func (s *GatewayService) calculateRecordUsageCostWithAccount(
+	ctx context.Context,
+	result *ForwardResult,
+	apiKey *APIKey,
+	account *Account,
 	billingModel string,
 	multiplier float64,
 	imageMultiplier float64,
@@ -1041,7 +1055,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 		if !imageCountBillingApplies(apiKey, result.ImageEndpoint) {
 			if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
 				// resolved 来自分组价或渠道价，是管理员配置的最终价，不叠加上游端点价格倍数。
-				return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+				return s.calculateTokenCostWithAccount(ctx, result, apiKey, account, billingModel, multiplier, pricingAt)
 			}
 		}
 		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier)
@@ -1071,7 +1085,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 	if isCacheStorageOnlyResult(result) {
 		tokenCost = &CostBreakdown{}
 	} else {
-		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+		tokenCost = s.calculateTokenCostWithAccount(ctx, result, apiKey, account, billingModel, multiplier, pricingAt)
 		if s.upstreamPriceFactorApplies(ctx, result, apiKey, billingModel) {
 			applyUpstreamPriceFactor(tokenCost, result)
 		}
@@ -1167,14 +1181,24 @@ func (s *GatewayService) hasIdentifiedResponseModelPricing(ctx context.Context, 
 	return s.billingService.HasIdentifiedTokenPricing(model), false
 }
 
-// resolveChannelPricing 检查指定模型是否存在渠道级别定价。
-// 返回非 nil 的 ResolvedPricing 表示有渠道定价，nil 表示走默认定价路径。
+// resolveChannelPricing 检查指定模型是否存在分组或渠道级别自定义定价。
+// 返回非 nil 的 ResolvedPricing 表示有管理员配置的分组/渠道定价，nil 表示走自动渠道/默认定价路径。
 func (s *GatewayService) resolveChannelPricing(ctx context.Context, billingModel string, apiKey *APIKey) *ResolvedPricing {
-	if s.resolver == nil || apiKey.Group == nil {
+	if s.resolver == nil || apiKey == nil {
 		return nil
 	}
-	gid := apiKey.Group.ID
-	resolved := s.resolver.Resolve(ctx, PricingInput{Model: billingModel, GroupID: &gid, Group: apiKey.Group})
+	var gidPtr *int64
+	if apiKey.Group != nil && apiKey.Group.ID > 0 {
+		gid := apiKey.Group.ID
+		gidPtr = &gid
+	} else if apiKey.GroupID != nil && *apiKey.GroupID > 0 {
+		gid := *apiKey.GroupID
+		gidPtr = &gid
+	}
+	if gidPtr == nil {
+		return nil
+	}
+	resolved := s.resolver.Resolve(ctx, PricingInput{Model: billingModel, GroupID: gidPtr, Group: apiKey.Group})
 	if resolved.Source == PricingSourceGroup || resolved.Source == PricingSourceChannel {
 		return resolved
 	}
@@ -1285,7 +1309,7 @@ func (usage ClaudeUsage) billingUsageTokens() UsageTokens {
 	return tokens
 }
 
-// calculateTokenCost 计算 Token 计费：路径选择（分组/渠道定价 → 内置定价）
+// calculateTokenCost 计算 Token 计费：路径选择（分组定价 > 对应渠道定价 > 默认渠道定价）
 // 统一交给 BillingService.CalculateTokenCostForRequest，与模型广场的阶梯表查询同源。
 func (s *GatewayService) calculateTokenCost(
 	ctx context.Context,
@@ -1295,18 +1319,57 @@ func (s *GatewayService) calculateTokenCost(
 	multiplier float64,
 	pricingAt time.Time,
 ) *CostBreakdown {
+	return s.calculateTokenCostWithAccount(ctx, result, apiKey, nil, billingModel, multiplier, pricingAt)
+}
+
+func (s *GatewayService) calculateTokenCostWithAccount(
+	ctx context.Context,
+	result *ForwardResult,
+	apiKey *APIKey,
+	account *Account,
+	billingModel string,
+	multiplier float64,
+	pricingAt time.Time,
+) *CostBreakdown {
 	tokens := result.Usage.billingUsageTokens()
 
-	var resolved *ResolvedPricing
-	if s.resolver != nil && apiKey.Group != nil {
-		gid := apiKey.Group.ID
-		resolved = s.resolver.Resolve(ctx, PricingInput{Model: billingModel, GroupID: &gid, Group: apiKey.Group})
+	var gidPtr *int64
+	if apiKey != nil {
+		if apiKey.Group != nil && apiKey.Group.ID > 0 {
+			gid := apiKey.Group.ID
+			gidPtr = &gid
+		} else if apiKey.GroupID != nil && *apiKey.GroupID > 0 {
+			gid := *apiKey.GroupID
+			gidPtr = &gid
+		}
 	}
 
+	var resolved *ResolvedPricing
+	if s.resolver != nil && (gidPtr != nil || account != nil) {
+		var group *Group
+		if apiKey != nil {
+			group = apiKey.Group
+		}
+		resolved = s.resolver.Resolve(ctx, PricingInput{
+			Model:         billingModel,
+			GroupID:       gidPtr,
+			Group:         group,
+			Account:       account,
+			UpstreamModel: result.UpstreamModel,
+		})
+	}
+
+	var group *Group
+	if apiKey != nil {
+		group = apiKey.Group
+	}
 	cost, err := s.billingService.CalculateTokenCostForRequest(TokenCostRequest{
 		Ctx:             ctx,
 		Model:           billingModel,
-		Group:           apiKey.Group,
+		GroupID:         gidPtr,
+		Group:           group,
+		Account:         account,
+		UpstreamModel:   result.UpstreamModel,
 		Tokens:          tokens,
 		RateMultiplier:  multiplier,
 		PricingAt:       pricingAt,

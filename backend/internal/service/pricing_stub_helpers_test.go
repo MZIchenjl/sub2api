@@ -6,28 +6,56 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// openAILadderCatalogJSON 镜像真实同步目录的形态：长上下文用 above_272k 绝对价字段表达，
-// 由解析层折算成阈值+倍率。静态 Go 兜底价不再携带阶梯，阶梯计费一律走目录数据。
+// openAILadderCatalogJSON models.dev 形态的长上下文阶梯样例（tiers + context_over_200k）。
 const openAILadderCatalogJSON = `{
-	"gpt-5.4": {"litellm_provider": "openai", "mode": "chat",
-		"input_cost_per_token": 2.5e-06, "output_cost_per_token": 1.5e-05,
-		"cache_read_input_token_cost": 2.5e-07, "cache_creation_input_token_cost": 2.5e-06,
-		"input_cost_per_token_above_272k_tokens": 5e-06,
-		"output_cost_per_token_above_272k_tokens": 2.25e-05,
-		"cache_read_input_token_cost_above_272k_tokens": 5e-07},
-	"gpt-5.5-pro": {"litellm_provider": "openai", "mode": "chat",
-		"input_cost_per_token": 3e-05, "output_cost_per_token": 1.8e-04,
-		"input_cost_per_token_above_272k_tokens": 6e-05,
-		"output_cost_per_token_above_272k_tokens": 2.7e-04}
+	"openai": {
+		"id": "openai",
+		"name": "OpenAI",
+		"models": {
+			"gpt-5.4": {
+				"id": "gpt-5.4",
+				"name": "GPT-5.4",
+				"cost": {
+					"input": 2.5,
+					"output": 15,
+					"cache_read": 0.25,
+					"cache_write": 2.5,
+					"tiers": [{"input": 5, "output": 22.5, "cache_read": 0.5, "tier": {"type": "context", "size": 272000}}]
+				}
+			},
+			"gpt-5.5-pro": {
+				"id": "gpt-5.5-pro",
+				"name": "GPT-5.5 Pro",
+				"cost": {
+					"input": 30,
+					"output": 180,
+					"tiers": [{"input": 60, "output": 270, "tier": {"type": "context", "size": 272000}}]
+				}
+			}
+		}
+	}
 }`
 
-// newStubPricingServiceFromJSON 用与生产一致的解析路径（含 above_XXXk 阶梯折算）
-// 从原始目录 JSON 构造目录 stub。无 build tag：带 unit 标签与默认构建的测试文件都会用到。
+// newStubPricingServiceFromJSON 使用 models.dev 解析路径构造 PricingService stub。
 func newStubPricingServiceFromJSON(t *testing.T, body string) *PricingService {
 	t.Helper()
-	s := &PricingService{}
-	data, err := s.parsePricingData([]byte(body))
-	require.NoError(t, err)
-	s.pricingData = data
+	s := NewPricingService(nil, nil)
+	require.NoError(t, s.LoadModelsDevJSON([]byte(body)))
+	return s
+}
+
+// newStubPricingServiceFromCatalogMap 从 CatalogModelPricing 映射直接构造 PricingService stub。
+func newStubPricingServiceFromCatalogMap(data map[string]*CatalogModelPricing) *PricingService {
+	s := NewPricingService(nil, nil)
+	if data != nil {
+		s.effectiveDefaultData = data
+		for modelID, p := range data {
+			if p == nil || p.Provider == "" {
+				continue
+			}
+			prov := p.Provider
+			s.providerModels[prov] = append(s.providerModels[prov], modelID)
+		}
+	}
 	return s
 }

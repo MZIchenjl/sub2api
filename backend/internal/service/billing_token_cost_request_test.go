@@ -30,7 +30,7 @@ func newTokenCostTestEnv(t *testing.T, groupPlatform string, pricing []ChannelMo
 
 // geminiCatalogStub 无阶梯字段的 gemini 目录条目（用于验证"无数据即无阶梯"）。
 func geminiCatalogStub() *PricingService {
-	return newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+	return newStubPricingServiceFromMap(map[string]*CatalogModelPricing{
 		"gemini-2.5-pro": {
 			Mode:                    "chat",
 			InputCostPerToken:       1.25e-6,
@@ -40,18 +40,22 @@ func geminiCatalogStub() *PricingService {
 	})
 }
 
-// geminiLadderCatalogJSON 镜像真实目录的 gemini-2.5-pro 条目（含 cache_creation 基础价修正后的
-// 数值）：above_200k 绝对价由解析层折算成 200K 阈值 + 输入 ×2 / 输出 ×1.5；cache 侧 above 档
-// 恰为基础价 × 输入倍率（缓存写入按标准输入价，Google 对缓存写入不另收费）。
+// geminiLadderCatalogJSON 镜像 models.dev 目录的 gemini-2.5-pro 条目（200K 阈值 + 输入 ×2 / 输出 ×1.5）。
 const geminiLadderCatalogJSON = `{
-	"gemini-2.5-pro": {"litellm_provider": "vertex_ai-language-models", "mode": "chat",
-		"input_cost_per_token": 1.25e-06, "output_cost_per_token": 1e-05,
-		"cache_read_input_token_cost": 1.25e-07,
-		"cache_creation_input_token_cost": 1.25e-06,
-		"input_cost_per_token_above_200k_tokens": 2.5e-06,
-		"output_cost_per_token_above_200k_tokens": 1.5e-05,
-		"cache_read_input_token_cost_above_200k_tokens": 2.5e-07,
-		"cache_creation_input_token_cost_above_200k_tokens": 2.5e-06}
+	"google": {
+		"id": "google",
+		"name": "Google",
+		"models": {
+			"gemini-2.5-pro": {
+				"id": "gemini-2.5-pro",
+				"name": "Gemini 2.5 Pro",
+				"cost": {
+					"input": 1.25, "output": 10, "cache_read": 0.125, "cache_write": 1.25,
+					"context_over_200k": {"input": 2.5, "output": 15, "cache_read": 0.25, "cache_write": 2.5}
+				}
+			}
+		}
+	}
 }`
 
 func geminiLadderCatalogStub(t *testing.T) *PricingService {
@@ -114,7 +118,7 @@ func TestCalculateTokenCostForRequest_CatalogLadderFollowsGroupToggle(t *testing
 		group := &Group{ID: 100, Platform: PlatformGemini, LongContextPricingEnabled: enabled}
 		gid := group.ID
 		resolved := resolver.Resolve(context.Background(), PricingInput{Model: "gemini-2.5-pro", GroupID: &gid, Group: group})
-		require.Equal(t, PricingSourceLiteLLM, resolved.Source)
+		require.Equal(t, PricingSourceModelsDev, resolved.Source)
 
 		got, err := bs.CalculateTokenCostForRequest(TokenCostRequest{
 			Ctx: context.Background(), Model: "gemini-2.5-pro", Group: group, Tokens: tokens, RateMultiplier: 1,
@@ -139,7 +143,7 @@ func TestCalculateTokenCostForRequest_GeminiLadderAppliesToCacheItems(t *testing
 	group := &Group{ID: 100, Platform: PlatformGemini, LongContextPricingEnabled: true}
 	gid := group.ID
 	resolved := resolver.Resolve(context.Background(), PricingInput{Model: "gemini-2.5-pro", GroupID: &gid, Group: group})
-	require.Equal(t, PricingSourceLiteLLM, resolved.Source)
+	require.Equal(t, PricingSourceModelsDev, resolved.Source)
 
 	calc := func(tokens UsageTokens) *CostBreakdown {
 		got, err := bs.CalculateTokenCostForRequest(TokenCostRequest{

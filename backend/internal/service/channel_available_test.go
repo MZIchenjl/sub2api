@@ -201,15 +201,15 @@ func TestPricingNeedsFallback(t *testing.T) {
 	}
 }
 
-func TestSynthesizePricingFromLiteLLM_TokenMode(t *testing.T) {
-	lp := &LiteLLMModelPricing{
+func TestSynthesizePricingFromCatalog_TokenMode(t *testing.T) {
+	lp := &CatalogModelPricing{
 		Mode:                        "chat",
 		InputCostPerToken:           3e-6,
 		OutputCostPerToken:          1.5e-5,
 		CacheCreationInputTokenCost: 3.75e-6,
 		CacheReadInputTokenCost:     3e-7,
 	}
-	got := synthesizePricingFromLiteLLM(lp, nil)
+	got := synthesizePricingFromCatalog(lp, nil)
 	require.NotNil(t, got)
 	require.Equal(t, BillingModeToken, got.BillingMode)
 	require.NotNil(t, got.InputPrice)
@@ -217,29 +217,26 @@ func TestSynthesizePricingFromLiteLLM_TokenMode(t *testing.T) {
 	require.NotNil(t, got.CacheReadPrice)
 }
 
-func TestSynthesizePricingFromLiteLLM_ImageGenerationMode(t *testing.T) {
-	// LiteLLM mode=image_generation 且渠道未声明模式时，按 image 合成。
-	lp := &LiteLLMModelPricing{
+func TestSynthesizePricingFromCatalog_ImageGenerationMode(t *testing.T) {
+	lp := &CatalogModelPricing{
 		Mode:                    "image_generation",
 		OutputCostPerImageToken: 4e-5,
 	}
-	got := synthesizePricingFromLiteLLM(lp, nil)
+	got := synthesizePricingFromCatalog(lp, nil)
 	require.NotNil(t, got)
 	require.Equal(t, BillingModeImage, got.BillingMode)
 	require.Nil(t, got.PerRequestPrice)
 	require.NotNil(t, got.ImageOutputPrice)
 }
 
-func TestSynthesizePricingFromLiteLLM_RespectsExistingChannelMode(t *testing.T) {
-	// admin UI 选了 per_request 但没填价：LiteLLM 数据按 per_request 合成,
-	// 即便 LiteLLM 标的是 chat 模式也尊重渠道选择。
-	lp := &LiteLLMModelPricing{
+func TestSynthesizePricingFromCatalog_RespectsExistingChannelMode(t *testing.T) {
+	lp := &CatalogModelPricing{
 		Mode:               "chat",
 		InputCostPerToken:  5e-6,
 		OutputCostPerImage: 0.04,
 	}
 	existing := &ChannelModelPricing{BillingMode: BillingModePerRequest}
-	got := synthesizePricingFromLiteLLM(lp, existing)
+	got := synthesizePricingFromCatalog(lp, existing)
 	require.NotNil(t, got)
 	require.Equal(t, BillingModePerRequest, got.BillingMode)
 	require.NotNil(t, got.PerRequestPrice)
@@ -247,7 +244,7 @@ func TestSynthesizePricingFromLiteLLM_RespectsExistingChannelMode(t *testing.T) 
 }
 
 func TestFillGlobalPricingFallback_NilPricing(t *testing.T) {
-	pricingSvc := newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+	pricingSvc := newStubPricingServiceFromMap(map[string]*CatalogModelPricing{
 		"claude-opus-4-5": {Mode: "chat", InputCostPerToken: 5e-6},
 	})
 	svc := &ChannelService{pricingService: pricingSvc}
@@ -261,9 +258,8 @@ func TestFillGlobalPricingFallback_NilPricing(t *testing.T) {
 	require.InDelta(t, 5e-6, *models[0].Pricing.InputPrice, 1e-12)
 }
 
-func TestFillGlobalPricingFallback_EmptyPricingFillsFromLiteLLM(t *testing.T) {
-	// 核心场景：admin UI 建了 pricing 条目（image 模式）但没填价，应走 LiteLLM 兜底。
-	pricingSvc := newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+func TestFillGlobalPricingFallback_EmptyPricingFillsFromCatalog(t *testing.T) {
+	pricingSvc := newStubPricingServiceFromMap(map[string]*CatalogModelPricing{
 		"gpt-image-1": {
 			Mode:                    "image_generation",
 			OutputCostPerImageToken: 4e-5,
@@ -289,8 +285,7 @@ func TestFillGlobalPricingFallback_EmptyPricingFillsFromLiteLLM(t *testing.T) {
 }
 
 func TestFillGlobalPricingFallback_KeepsExistingPrice(t *testing.T) {
-	// 渠道已经填了价格的条目不应被回落覆盖。
-	pricingSvc := newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+	pricingSvc := newStubPricingServiceFromMap(map[string]*CatalogModelPricing{
 		"served-model": {Mode: "chat", InputCostPerToken: 1e-6},
 	})
 	svc := &ChannelService{pricingService: pricingSvc}
@@ -306,6 +301,6 @@ func TestFillGlobalPricingFallback_KeepsExistingPrice(t *testing.T) {
 	require.Same(t, existing, models[0].Pricing)
 }
 
-func newStubPricingServiceFromMap(data map[string]*LiteLLMModelPricing) *PricingService {
-	return &PricingService{pricingData: data}
+func newStubPricingServiceFromMap(data map[string]*CatalogModelPricing) *PricingService {
+	return newStubPricingServiceFromCatalogMap(data)
 }

@@ -215,7 +215,7 @@ func TestOpenAIFastBillingMultiplier_2xAnd25x(t *testing.T) {
 	t.Parallel()
 
 	// 目录数据携带官方旧口径（gpt-5.5 priority=2x）；修正后 fast 必须按 2.5x 计费。
-	catalog := map[string]*LiteLLMModelPricing{
+	catalog := map[string]*CatalogModelPricing{
 		"gpt-5.4": {
 			InputCostPerToken:               2.5e-6,
 			InputCostPerTokenPriority:       5e-6,
@@ -241,7 +241,7 @@ func TestOpenAIFastBillingMultiplier_2xAnd25x(t *testing.T) {
 			CacheReadInputTokenCostPriority: 1e-6,
 		},
 	}
-	billing := NewBillingService(&config.Config{}, &PricingService{pricingData: catalog})
+	billing := NewBillingService(&config.Config{}, &PricingService{effectiveDefaultData: catalog})
 	tokens := UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000}
 
 	standard := func(model string) *CostBreakdown {

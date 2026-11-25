@@ -33,25 +33,25 @@ type PlatformSpec struct {
 	// CNProvider 标识国产单一厂商（Kimi / 智谱 / DeepSeek / MiniMax），共享国产
 	// 供应商的余额 / Coding Plan 等能力。
 	CNProvider bool `json:"cn_provider"`
-	// LiteLLMProvider 是定价目录中的 provider 名；空表示不支持从定价目录同步模型。
-	LiteLLMProvider string `json:"litellm_provider,omitempty"`
+	// ModelsDevProvider 是 models.dev 定价目录中的 provider ID；空表示不支持按 provider 同步模型。
+	ModelsDevProvider string `json:"models_dev_provider,omitempty"`
 }
 
 // platformList 的顺序即平台的展示顺序。
 var platformList = []PlatformSpec{
-	{ID: PlatformAnthropic, DisplayName: "Anthropic", Gateway: PlatformGatewayAnthropic, LiteLLMProvider: "anthropic"},
-	{ID: PlatformOpenAI, DisplayName: "OpenAI", Gateway: PlatformGatewayOpenAI, LiteLLMProvider: "openai"},
-	{ID: PlatformGemini, DisplayName: "Gemini", Gateway: PlatformGatewayGemini, LiteLLMProvider: "gemini"},
-	{ID: PlatformAntigravity, DisplayName: "Antigravity", Gateway: PlatformGatewayAntigravity, LiteLLMProvider: "anthropic"},
-	{ID: PlatformGrok, DisplayName: "Grok", Gateway: PlatformGatewayOpenAI, LiteLLMProvider: "xai"},
-	{ID: PlatformKimi, DisplayName: "Kimi", Gateway: PlatformGatewayOpenAI, CNProvider: true, LiteLLMProvider: "moonshot"},
-	{ID: PlatformZhipu, DisplayName: "Zhipu GLM", Gateway: PlatformGatewayOpenAI, CNProvider: true, LiteLLMProvider: "zhipu"},
-	{ID: PlatformDeepseek, DisplayName: "DeepSeek", Gateway: PlatformGatewayOpenAI, CNProvider: true, LiteLLMProvider: "deepseek"},
-	{ID: PlatformMiniMax, DisplayName: "MiniMax", Gateway: PlatformGatewayOpenAI, CNProvider: true, LiteLLMProvider: "minimax"},
-	{ID: PlatformOpenCodeGo, DisplayName: "OpenCode", Gateway: PlatformGatewayOpenAI, LiteLLMProvider: "opencode-go"},
-	{ID: PlatformTypeSafe, DisplayName: "TypeSafe / Jev", Gateway: PlatformGatewayAnthropic, LiteLLMProvider: "typesafe"},
-	{ID: PlatformCommandCode, DisplayName: "Command Code", Gateway: PlatformGatewayOpenAI},
-	{ID: PlatformCline, DisplayName: "Cline", Gateway: PlatformGatewayOpenAI},
+	{ID: PlatformAnthropic, DisplayName: "Anthropic", Gateway: PlatformGatewayAnthropic, ModelsDevProvider: "anthropic"},
+	{ID: PlatformOpenAI, DisplayName: "OpenAI", Gateway: PlatformGatewayOpenAI, ModelsDevProvider: "openai"},
+	{ID: PlatformGemini, DisplayName: "Gemini", Gateway: PlatformGatewayGemini, ModelsDevProvider: "google"},
+	{ID: PlatformAntigravity, DisplayName: "Antigravity", Gateway: PlatformGatewayAntigravity, ModelsDevProvider: "anthropic"},
+	{ID: PlatformGrok, DisplayName: "Grok", Gateway: PlatformGatewayOpenAI, ModelsDevProvider: "xai"},
+	{ID: PlatformKimi, DisplayName: "Kimi", Gateway: PlatformGatewayOpenAI, CNProvider: true, ModelsDevProvider: "moonshotai"},
+	{ID: PlatformZhipu, DisplayName: "Zhipu GLM", Gateway: PlatformGatewayOpenAI, CNProvider: true, ModelsDevProvider: "zhipuai"},
+	{ID: PlatformDeepseek, DisplayName: "DeepSeek", Gateway: PlatformGatewayOpenAI, CNProvider: true, ModelsDevProvider: "deepseek"},
+	{ID: PlatformMiniMax, DisplayName: "MiniMax", Gateway: PlatformGatewayOpenAI, CNProvider: true, ModelsDevProvider: "minimax"},
+	{ID: PlatformOpenCodeGo, DisplayName: "OpenCode", Gateway: PlatformGatewayOpenAI, ModelsDevProvider: "opencode-go"},
+	{ID: PlatformTypeSafe, DisplayName: "TypeSafe / Jev", Gateway: PlatformGatewayAnthropic, ModelsDevProvider: "typesafe"},
+	{ID: PlatformCommandCode, DisplayName: "Command Code", Gateway: PlatformGatewayOpenAI, ModelsDevProvider: "commandcode"},
+	{ID: PlatformCline, DisplayName: "Cline", Gateway: PlatformGatewayOpenAI, ModelsDevProvider: "cline-pass"},
 	{ID: PlatformDevin, DisplayName: "Devin", Gateway: PlatformGatewayDevin},
 	{ID: PlatformMeta, DisplayName: "Meta Muse", Gateway: PlatformGatewayMeta},
 }

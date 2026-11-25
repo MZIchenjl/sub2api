@@ -126,7 +126,7 @@ func fillGlobalPricingFallback(pricingService *PricingService, models []Supporte
 	for i := range models {
 		if pricingService != nil && pricingNeedsFallback(models[i].Pricing) {
 			if lp := pricingService.GetModelPricing(models[i].Name); lp != nil {
-				models[i].Pricing = synthesizePricingFromLiteLLM(lp, models[i].Pricing)
+				models[i].Pricing = synthesizePricingFromCatalog(lp, models[i].Pricing)
 			}
 		}
 	}
@@ -153,17 +153,8 @@ func pricingNeedsFallback(p *ChannelModelPricing) bool {
 	return true
 }
 
-// synthesizePricingFromLiteLLM 把 LiteLLM 的定价数据转成 ChannelModelPricing 形态，
-// 仅用于展示。
-//
-// 计费模式优先级：
-//  1. 渠道已选 BillingMode（admin 在 UI 里选了 image / per_request 但没填价的场景，
-//     按选定模式合成对应字段）
-//  2. LiteLLM mode="image_generation" → image
-//  3. 默认 token
-//
-// LiteLLM 中字段 0 视为未配置，不带入展示。
-func synthesizePricingFromLiteLLM(lp *LiteLLMModelPricing, existing *ChannelModelPricing) *ChannelModelPricing {
+// synthesizePricingFromCatalog 把 models.dev 定价目录数据转成 ChannelModelPricing 形态，仅用于展示。
+func synthesizePricingFromCatalog(lp *CatalogModelPricing, existing *ChannelModelPricing) *ChannelModelPricing {
 	if lp == nil {
 		return existing
 	}

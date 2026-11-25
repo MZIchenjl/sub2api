@@ -5,42 +5,42 @@
       "display_name": "Anthropic",
       "gateway": "anthropic",
       "cn_provider": false,
-      "litellm_provider": "anthropic"
+      "models_dev_provider": "anthropic"
     },
     {
       "id": "openai",
       "display_name": "OpenAI",
       "gateway": "openai",
       "cn_provider": false,
-      "litellm_provider": "openai"
+      "models_dev_provider": "openai"
     },
     {
       "id": "gemini",
       "display_name": "Gemini",
       "gateway": "gemini",
       "cn_provider": false,
-      "litellm_provider": "gemini"
+      "models_dev_provider": "google"
     },
     {
       "id": "antigravity",
       "display_name": "Antigravity",
       "gateway": "antigravity",
       "cn_provider": false,
-      "litellm_provider": "anthropic"
+      "models_dev_provider": "anthropic"
     },
     {
       "id": "grok",
       "display_name": "Grok",
       "gateway": "openai",
       "cn_provider": false,
-      "litellm_provider": "xai"
+      "models_dev_provider": "xai"
     },
     {
       "id": "kimi",
       "display_name": "Kimi",
       "gateway": "openai",
       "cn_provider": true,
-      "litellm_provider": "moonshot",
+      "models_dev_provider": "moonshotai",
       "multi_protocol": {
         "default_mode": "payg",
         "routing": "by_inbound",
@@ -69,7 +69,7 @@
       "display_name": "Zhipu GLM",
       "gateway": "openai",
       "cn_provider": true,
-      "litellm_provider": "zhipu",
+      "models_dev_provider": "zhipuai",
       "multi_protocol": {
         "default_mode": "payg",
         "routing": "by_inbound",
@@ -96,7 +96,7 @@
       "display_name": "DeepSeek",
       "gateway": "openai",
       "cn_provider": true,
-      "litellm_provider": "deepseek",
+      "models_dev_provider": "deepseek",
       "multi_protocol": {
         "default_mode": "payg",
         "routing": "by_inbound",
@@ -118,7 +118,7 @@
       "display_name": "MiniMax",
       "gateway": "openai",
       "cn_provider": true,
-      "litellm_provider": "minimax",
+      "models_dev_provider": "minimax",
       "multi_protocol": {
         "default_mode": "payg",
         "routing": "by_inbound",
@@ -147,7 +147,7 @@
       "display_name": "OpenCode",
       "gateway": "openai",
       "cn_provider": false,
-      "litellm_provider": "opencode-go",
+      "models_dev_provider": "opencode-go",
       "multi_protocol": {
         "default_mode": "go",
         "routing": "by_model",
@@ -224,13 +224,14 @@
       "display_name": "TypeSafe / Jev",
       "gateway": "anthropic",
       "cn_provider": false,
-      "litellm_provider": "typesafe"
+      "models_dev_provider": "typesafe"
     },
     {
       "id": "command_code",
       "display_name": "Command Code",
       "gateway": "openai",
       "cn_provider": false,
+      "models_dev_provider": "commandcode",
       "multi_protocol": {
         "default_mode": "payg",
         "routing": "by_model",
@@ -266,6 +267,7 @@
       "display_name": "Cline",
       "gateway": "openai",
       "cn_provider": false,
+      "models_dev_provider": "cline-pass",
       "multi_protocol": {
         "default_mode": "payg",
         "routing": "by_inbound",

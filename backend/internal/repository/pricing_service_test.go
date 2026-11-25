@@ -39,7 +39,7 @@ func (s *PricingServiceSuite) TestFetchPricingJSON_Success() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ok" {
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"ok":true}`))
+			_, _ = w.Write([]byte(`{"anthropic":{"id":"anthropic","name":"Anthropic","models":{}}}`))
 			return
 		}
 		w.WriteHeader(http.StatusInternalServerError)
@@ -47,7 +47,7 @@ func (s *PricingServiceSuite) TestFetchPricingJSON_Success() {
 
 	body, err := s.client.FetchPricingJSON(s.ctx, s.srv.URL+"/ok")
 	require.NoError(s.T(), err, "FetchPricingJSON")
-	require.Equal(s.T(), `{"ok":true}`, string(body), "body mismatch")
+	require.Contains(s.T(), string(body), `"anthropic"`)
 }
 
 func (s *PricingServiceSuite) TestFetchPricingJSON_NonOKStatus() {
@@ -59,63 +59,9 @@ func (s *PricingServiceSuite) TestFetchPricingJSON_NonOKStatus() {
 	require.Error(s.T(), err, "expected error for non-200 status")
 }
 
-func (s *PricingServiceSuite) TestFetchHashText_ParsesFields() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/hashfile":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("abc123  model_prices.json\n"))
-		case "/hashonly":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("def456\n"))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-
-	hash, err := s.client.FetchHashText(s.ctx, s.srv.URL+"/hashfile")
-	require.NoError(s.T(), err, "FetchHashText")
-	require.Equal(s.T(), "abc123", hash, "hash mismatch")
-
-	hash2, err := s.client.FetchHashText(s.ctx, s.srv.URL+"/hashonly")
-	require.NoError(s.T(), err, "FetchHashText")
-	require.Equal(s.T(), "def456", hash2, "hash mismatch")
-}
-
-func (s *PricingServiceSuite) TestFetchHashText_NonOKStatus() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-
-	_, err := s.client.FetchHashText(s.ctx, s.srv.URL+"/nope")
-	require.Error(s.T(), err, "expected error for non-200 status")
-}
-
 func (s *PricingServiceSuite) TestFetchPricingJSON_InvalidURL() {
 	_, err := s.client.FetchPricingJSON(s.ctx, "://invalid-url")
 	require.Error(s.T(), err, "expected error for invalid URL")
-}
-
-func (s *PricingServiceSuite) TestFetchHashText_EmptyBody() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		// empty body
-	}))
-
-	hash, err := s.client.FetchHashText(s.ctx, s.srv.URL+"/empty")
-	require.NoError(s.T(), err, "FetchHashText empty body should not error")
-	require.Equal(s.T(), "", hash, "expected empty hash")
-}
-
-func (s *PricingServiceSuite) TestFetchHashText_WhitespaceOnly() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("   \n"))
-	}))
-
-	hash, err := s.client.FetchHashText(s.ctx, s.srv.URL+"/ws")
-	require.NoError(s.T(), err, "FetchHashText whitespace body should not error")
-	require.Equal(s.T(), "", hash, "expected empty hash after trimming")
 }
 
 func (s *PricingServiceSuite) TestFetchPricingJSON_ContextCancel() {
@@ -145,7 +91,7 @@ func TestNewPricingRemoteClient_InvalidProxy_NoFallback(t *testing.T) {
 	_, ok := client.(*pricingRemoteClientError)
 	require.True(t, ok, "should return error client when proxy is invalid and fallback disabled")
 
-	_, err := client.FetchPricingJSON(context.Background(), "http://example.com")
+	_, err := client.FetchPricingJSON(context.Background(), "https://models.dev/api.json")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "proxy client init failed")
 }

@@ -1,0 +1,143 @@
+export default {
+  modelPricing: {
+    title: '模型定价',
+    description: '仅同步系统支持平台的模型价格，支持展开按账户类型渠道编辑与加锁，也支持按系统分组单独设置价格',
+    unitHint: '单位：USD / 百万 Token（$/MTok）',
+    priorityHint: '生效优先级：分组单独设置价格 > 对应渠道价格（按账户类型自动匹配） > 默认渠道价格',
+    searchPlaceholder: '搜索模型 ID、名称或渠道...',
+    groupScopePlaceholder: '选择系统分组',
+    defaultGroupOption: '默认价格（全局）',
+    platformPlaceholder: '全部平台',
+    allPlatforms: '全部平台',
+    filterPlaceholder: '筛选状态',
+    filterAll: '全部状态',
+    filterOverridden: '已单独设置',
+    filterCustom: '自定义价格',
+    filterLocked: '已锁定渠道',
+    syncSettings: '同步设置',
+    syncNow: '立即同步',
+    syncing: '同步中...',
+    addCustomModel: '添加自定义模型',
+    syncSummary: '已缓存 {models} 个系统支持模型 · {channels} 个渠道价源',
+    lockedSummary: '已锁定 {count} 个渠道价',
+    autoSyncOn: '定时同步：每 {hours} 小时（自动跳过已锁定渠道）',
+    autoSyncOff: '定时同步已关闭',
+    lastSyncAt: '上次同步：{time}',
+    neverSynced: '尚未同步',
+    syncFailed: '同步失败：{error}',
+    groupScopeHint: '当前分组：{name}（未单独设置的模型自动回退到对应渠道价 / 默认价）',
+    columns: {
+      model: '模型 / 渠道',
+      platform: '平台 / 锁状态',
+      input: '输入 ($/M)',
+      output: '输出 ($/M)',
+      cacheRead: '缓存读 ($/M)',
+      cacheWrite: '缓存写 ($/M)',
+      actions: '操作'
+    },
+    sources: {
+      default_auto: '默认渠道',
+      default_custom: '默认自定义',
+      inherited_default: '继承默认',
+      group_custom: '分组定价'
+    },
+    badges: {
+      defaultChannel: '默认',
+      defaultChannelSource: '默认：{channel}',
+      otherChannelCount: '+{count} 其他渠道',
+      channelCustom: '已自定义',
+      lockedCount: '{count} 锁定',
+      customOnly: '自定义',
+      groupOverrides: '{count} 个分组覆盖',
+      defaultRef: '默认 ${value}',
+      syncedRef: '同步 ${value}',
+      cache1h: '1h: ${value}',
+      longContext: '>{tokens}K ({inMult}x/{outMult}x)'
+    },
+    lock: {
+      locked: '已锁定',
+      unlocked: '未锁定',
+      defaultLocked: '默认已锁',
+      lockHint: '点击锁定该渠道价格（下一轮自动同步时不更新）',
+      unlockHint: '点击解锁该渠道价格（允许参与后续同步更新）',
+      lockDefaultHint: '点击锁定默认渠道价格（下一轮自动同步时不更新）',
+      unlockDefaultHint: '点击解锁默认渠道价格（允许参与后续同步更新）'
+    },
+    actions: {
+      lock: '锁定',
+      unlock: '解锁',
+      edit: '编辑',
+      reset: '重置',
+      expandChannels: '展开渠道价格',
+      collapseChannels: '收起渠道价格'
+    },
+    empty: {
+      title: '暂无匹配的模型价格',
+      description: '点击右上角“立即同步”从 models.dev 拉取系统支持的模型价格，或手动添加自定义模型'
+    },
+    editModal: {
+      createTitle: '添加自定义模型定价',
+      editTitle: '编辑模型定价',
+      editChannelTitle: '编辑渠道定价 · {channel}',
+      scopeDefault: '作用范围：全局默认价格（同步对应模型的默认渠道；未单独设置价格的分组将继承此默认价）',
+      scopeGroup: '作用范围：系统分组「{name}」（优先级最高，不受同步影响；重置后恢复回退）',
+      scopeChannel: '作用范围：账户类型渠道「{channel}」（该账户类型请求优先按此价格计费；若分组单独设置了价格仍以分组价为准）',
+      modelId: '模型 ID',
+      modelIdPlaceholder: '例如 claude-sonnet-4-6 或自定义模型名',
+      platform: '所属平台',
+      channelLabel: '渠道价源',
+      displayName: '显示名称（可选）',
+      displayNamePlaceholder: '例如 Claude Sonnet 4.6',
+      inputPerMillion: '输入价格（$/百万 Token）',
+      outputPerMillion: '输出价格（$/百万 Token）',
+      cacheReadPerMillion: '缓存读取价格（$/百万 Token）',
+      cacheWritePerMillion: '缓存写入价格（$/百万 Token）',
+      lockLabel: '锁定此渠道价格',
+      lockHint: '开启后，下一轮自动同步（以及“仅更新未锁定”手动同步）将跳过此渠道，不覆盖价格',
+      advancedTitle: '高级设置（1 小时缓存写 / 长上下文倍率）',
+      cacheWrite1hPerMillion: '1 小时缓存写入价格（可选，$/百万 Token）',
+      longContextThreshold: '长上下文阈值（Token 数，0 表示不启用）',
+      longContextInputMult: '长上下文输入倍率',
+      longContextOutputMult: '长上下文输出倍率'
+    },
+    syncConfirmModal: {
+      title: '确认同步 models.dev 价格',
+      summary: '当前有 {locked} 个已锁定渠道价格，{unlocked} 个未锁定自定义价格。请选择本次手动同步的覆盖策略：',
+      skipLockedTitle: '保留已锁定价格，仅更新未锁定渠道（推荐）',
+      skipLockedDesc: '拉取最新系统支持模型与价格；已锁定（🔒）的渠道价格保持不变，未锁定的渠道更新为最新同步价。',
+      overwriteAllTitle: '覆盖全部渠道价格（含已锁定渠道）',
+      overwriteAllDesc: '使用最新 models.dev 价格强制覆盖所有渠道（同时解除锁定并清除渠道自定义价）。',
+      groupSafeNote: '说明：手动添加的纯自定义模型及「系统分组」单独设置的价格均不受本次同步影响。',
+      confirmAction: '确认同步'
+    },
+    syncModal: {
+      title: 'models.dev 定时同步设置',
+      autoSyncEnabled: '启用定时自动同步',
+      autoSyncHint: '按设定周期自动从 models.dev 拉取系统支持模型的最新价格；自动同步会自动跳过已锁定（🔒）的渠道价格',
+      intervalHours: '同步周期',
+      intervalOption: '每 {hours} 小时',
+      modelsDevUrl: 'models.dev 数据源 URL',
+      modelsDevUrlHint: '默认 https://models.dev/api.json；同步时会自动过滤仅保留系统支持平台与账户类型的模型价格'
+    },
+    resetConfirm: {
+      titleGroup: '重置分组模型定价',
+      messageGroup: '确定移除分组「{group}」中「{model}」的单独定价？移除后将自动按对应渠道价或默认渠道价计费。',
+      titleChannel: '重置渠道定价与锁定',
+      messageChannel: '确定恢复「{model}」在渠道「{channel}」的价格为最新 models.dev 同步价并解除锁定？',
+      titleDefault: '恢复默认渠道定价',
+      messageDefault: '确定恢复「{model}」为最新 models.dev 默认价格并解除锁定？若为纯自定义模型则将被删除。'
+    },
+    messages: {
+      syncSuccess: '同步完成：已缓存 {models} 个模型（{channels} 个渠道）',
+      syncSuccessWithStats: '同步完成：{models} 个模型，已跳过 {skipped} 个锁定渠道，更新/覆盖 {overwritten} 项',
+      syncError: '同步 models.dev 失败',
+      syncConfigSaved: '同步配置已保存',
+      overrideSaved: '模型定价已保存',
+      overrideReset: '已重置模型定价',
+      lockUpdated: '已锁定渠道价格，自动同步将跳过此项',
+      unlockUpdated: '已解锁渠道价格，将参与后续同步更新',
+      loadFailed: '加载模型定价失败',
+      modelIdRequired: '请填写模型 ID'
+    }
+  }
+}

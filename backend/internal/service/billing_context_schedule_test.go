@@ -69,14 +69,12 @@ func requirePrice(t *testing.T, want, got *float64, field string) {
 	require.InDelta(t, *want, *got, 1e-15, field)
 }
 
-// mustCatalogFromJSON 走生产解析路径（含 above_XXXk 折算）构造目录 stub；场景表无 *testing.T，解析失败直接 panic。
+// mustCatalogFromJSON 走生产 models.dev 解析路径构造目录 stub；场景表无 *testing.T，解析失败直接 panic。
 func mustCatalogFromJSON(body string) *PricingService {
-	s := &PricingService{}
-	data, err := s.parsePricingData([]byte(body))
-	if err != nil {
+	s := NewPricingService(nil, nil)
+	if err := s.LoadModelsDevJSON([]byte(body)); err != nil {
 		panic(err)
 	}
-	s.pricingData = data
 	return s
 }
 
@@ -307,11 +305,12 @@ func scheduleScenarios() []scheduleScenario {
 		{
 			name: "gpt-5.6 缺 cache_write 时按策略补 1.25 倍并带阶梯", model: "gpt-5.6-sol", platform: PlatformOpenAI, groupPlatform: PlatformOpenAI,
 			group: enabledGroup(PlatformOpenAI),
-			catalog: mustCatalogFromJSON(`{"gpt-5.6-sol": {"litellm_provider": "openai", "mode": "chat",
-				"input_cost_per_token": 5e-06, "output_cost_per_token": 3e-05, "cache_read_input_token_cost": 5e-07,
-				"input_cost_per_token_above_272k_tokens": 1e-05,
-				"output_cost_per_token_above_272k_tokens": 4.5e-05,
-				"cache_read_input_token_cost_above_272k_tokens": 1e-06}}`),
+			catalog: mustCatalogFromJSON(`{"openai": {"id": "openai", "name": "OpenAI", "models": {
+				"gpt-5.6-sol": {"id": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "cost": {
+					"input": 5, "output": 30, "cache_read": 0.5,
+					"tiers": [{"input": 10, "output": 45, "cache_read": 1, "tier": {"type": "context", "size": 272000}}]
+				}}
+			}}}`),
 			wantBasis: ContextPricingBasisWholeRequest,
 			check: func(t *testing.T, s *ContextPricingSchedule) {
 				require.Len(t, s.Tiers, 2)

@@ -33,11 +33,12 @@ type BuildInfo struct {
 	BuildType string
 }
 
-// ProvidePricingService creates and initializes PricingService
-func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient) (*PricingService, error) {
+// ProvidePricingService creates and initializes PricingService with optional DB persistence
+func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient, settingRepo SettingRepository) (*PricingService, error) {
 	svc := NewPricingService(cfg, remoteClient)
+	svc.SetSettingRepository(settingRepo)
 	if err := svc.Initialize(); err != nil {
-		// Pricing service initialization failure should not block startup, use fallback prices
+		// Pricing service initialization failure should not block startup
 		println("[Service] Warning: Pricing service initialization failed:", err.Error())
 	}
 	return svc, nil

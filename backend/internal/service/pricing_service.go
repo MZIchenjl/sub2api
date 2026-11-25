@@ -1,14 +1,13 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -26,238 +26,44 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	DefaultModelsDevURL             = "https://models.dev/api.json"
+	DefaultPricingSyncIntervalHours = 24
+	MinPricingSyncIntervalHours     = 1
+	MaxPricingSyncIntervalHours     = 720
+	modelsDevCatalogFileName        = "models_dev_catalog.json"
+
+	SettingKeyModelPricingSyncConfig = "model_pricing_sync_config"
+	SettingKeyModelPricingSyncMeta   = "model_pricing_sync_meta"
+	SettingKeyModelPricingOverrides  = "model_pricing_overrides"
+
+	PricingSyncStatusNever   = "never"
+	PricingSyncStatusSuccess = "success"
+	PricingSyncStatusFailed  = "failed"
+
+	PricingSyncOverwriteSkipLocked = "skip_locked"
+	PricingSyncOverwriteAll        = "overwrite_all"
+
+	tokensPerMillion = 1_000_000.0
+)
+
 var (
 	openAIModelDatePattern = regexp.MustCompile(`-\d{8}$`)
 	openAIModelBasePattern = regexp.MustCompile(`^(gpt-\d+(?:\.\d+)?)(?:-|$)`)
-	// aboveTierPricePattern 匹配 LiteLLM 长上下文绝对价字段名
-	// （input_cost_per_token_above_272k_tokens / output_cost_per_token_above_200k_tokens 等）。
-	// 带 _flex/_priority 服务档后缀的变体与 cache 侧字段不参与阈值/倍率折算。
-	aboveTierPricePattern = regexp.MustCompile(`^(input|output)_cost_per_token_above_(\d+)k_tokens$`)
-	// cacheTierPricePattern 匹配 cache 侧的长上下文绝对价字段名
-	// （cache_creation_input_token_cost_above_200k_tokens、cache_read_input_token_cost_above_272k_tokens_priority、
-	// cache_creation_input_token_cost_above_1hr_above_200k_tokens 等）。
-	// 组 1 为基础价字段名主干，组 2 为 1h 缓存时长段（可为空），组 3 为服务档后缀（可为空）。
-	cacheTierPricePattern = regexp.MustCompile(`^(cache_(?:creation|read)_input_token_cost)(_above_1hr)?_above_\d+k_tokens((?:_[a-z]+)?)$`)
-	// Official GPT Image 2.5 / 2.6 token rates (verified 2026-11-06):
-	// https://developers.openai.com/api/docs/pricing#image-generation-models
-	openAIGPTImage25FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:       5e-06,
-		CacheReadInputTokenCost: 1.25e-06,
-		InputCostPerImageToken:  8e-06, CacheReadInputImageTokenCost: 2e-06,
-		OutputCostPerImageToken: 3e-05,
-		LiteLLMProvider:         "openai",
-		Mode:                    "image_generation",
-		SupportsPromptCaching:   true,
-	}
-	openAIGPT54FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:       2.5e-06, // $2.5 per MTok
-		OutputCostPerToken:      1.5e-05, // $15 per MTok
-		CacheReadInputTokenCost: 2.5e-07, // $0.25 per MTok
-		LiteLLMProvider:         "openai",
-		Mode:                    "chat",
-		SupportsPromptCaching:   true,
-	}
-	openAIGPT6AstraFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   1e-05,
-		InputCostPerTokenPriority:           2e-05,
-		OutputCostPerToken:                  5e-05,
-		OutputCostPerTokenPriority:          1e-04,
-		CacheCreationInputTokenCost:         1.25e-05,
-		CacheCreationInputTokenCostPriority: 2.5e-05,
-		CacheReadInputTokenCost:             1e-06,
-		CacheReadInputTokenCostPriority:     2e-06,
-		LongContextInputTokenThreshold:      272_000,
-		LongContextInputCostMultiplier:      2,
-		LongContextOutputCostMultiplier:     1.5,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	openAIGPT61TerraFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   1e-6,
-		InputCostPerTokenPriority:           2e-6,
-		OutputCostPerToken:                  5e-6,
-		OutputCostPerTokenPriority:          10e-6,
-		CacheCreationInputTokenCost:         1.25e-6,
-		CacheCreationInputTokenCostPriority: 2.5e-6,
-		CacheReadInputTokenCost:             0.05e-6,
-		CacheReadInputTokenCostPriority:     0.1e-6,
-		LongContextInputTokenThreshold:      272_000,
-		LongContextInputCostMultiplier:      2,
-		LongContextOutputCostMultiplier:     1.5,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	openAIGPT62AstraFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   8e-6,
-		InputCostPerTokenPriority:           16e-6,
-		OutputCostPerToken:                  40e-6,
-		OutputCostPerTokenPriority:          80e-6,
-		CacheCreationInputTokenCost:         10e-6,
-		CacheCreationInputTokenCostPriority: 20e-6,
-		CacheReadInputTokenCost:             0.4e-6,
-		CacheReadInputTokenCostPriority:     0.8e-6,
-		LongContextInputTokenThreshold:      272_000,
-		LongContextInputCostMultiplier:      2,
-		LongContextOutputCostMultiplier:     1.5,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	openAIGPT61SolFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   2e-6,
-		InputCostPerTokenPriority:           4e-6,
-		OutputCostPerToken:                  10e-6,
-		OutputCostPerTokenPriority:          20e-6,
-		CacheCreationInputTokenCost:         2.5e-6,
-		CacheCreationInputTokenCostPriority: 5e-6,
-		CacheReadInputTokenCost:             0.1e-6,
-		CacheReadInputTokenCostPriority:     0.2e-6,
-		LongContextInputTokenThreshold:      272_000,
-		LongContextInputCostMultiplier:      2,
-		LongContextOutputCostMultiplier:     1.5,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	openAIGPT6SolFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   2e-6,
-		InputCostPerTokenPriority:           4e-6,
-		OutputCostPerToken:                  10e-6,
-		OutputCostPerTokenPriority:          20e-6,
-		CacheCreationInputTokenCost:         2.5e-6,
-		CacheCreationInputTokenCostPriority: 5e-6,
-		CacheReadInputTokenCost:             0.2e-6,
-		CacheReadInputTokenCostPriority:     0.4e-6,
-		LongContextInputTokenThreshold:      272_000,
-		LongContextInputCostMultiplier:      2,
-		LongContextOutputCostMultiplier:     1.5,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	openAIGPT6LunaFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   0.1e-6,
-		InputCostPerTokenPriority:           0.2e-6,
-		OutputCostPerToken:                  0.5e-6,
-		OutputCostPerTokenPriority:          1e-6,
-		CacheCreationInputTokenCost:         0.125e-6,
-		CacheCreationInputTokenCostPriority: 0.25e-6,
-		CacheReadInputTokenCost:             0.01e-6,
-		CacheReadInputTokenCostPriority:     0.02e-6,
-		LongContextInputTokenThreshold:      272_000,
-		LongContextInputCostMultiplier:      2,
-		LongContextOutputCostMultiplier:     1.5,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	// Fable/Mythos 5.2 share the official price card, including both cache TTLs:
-	// https://platform.claude.com/docs/en/about-claude/pricing
-	claude52FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken: 8e-6, OutputCostPerToken: 40e-6,
-		CacheCreationInputTokenCost: 10e-6, CacheCreationInputTokenCostAbove1hr: 16e-6,
-		CacheReadInputTokenCost: 0.2e-6,
-		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
-	}
-	claudeOpus55FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken: 4e-6, OutputCostPerToken: 20e-6,
-		CacheCreationInputTokenCost: 5e-6, CacheCreationInputTokenCostAbove1hr: 8e-6,
-		CacheReadInputTokenCost:   0.2e-6,
-		InputCostPerTokenPriority: 8e-6, OutputCostPerTokenPriority: 40e-6,
-		CacheCreationInputTokenCostPriority: 10e-6, CacheReadInputTokenCostPriority: 0.4e-6,
-		SupportsServiceTier: true, LiteLLMProvider: "anthropic", Mode: "chat", SupportsPromptCaching: true,
-	}
-	claudeSonnet55FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6,
-		CacheCreationInputTokenCost: 2.5e-6, CacheCreationInputTokenCostAbove1hr: 4e-6,
-		CacheReadInputTokenCost: 0.1e-6,
-		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
-	}
-	claudeHaiku55FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken: 1e-7, OutputCostPerToken: 5e-7,
-		CacheCreationInputTokenCost: 1.25e-7, CacheCreationInputTokenCostAbove1hr: 2e-7,
-		CacheReadInputTokenCost:        1e-8,
-		LongContextInputTokenThreshold: 100000,
-		LongContextInputCostMultiplier: 5, LongContextOutputCostMultiplier: 5,
-		LiteLLMProvider: "anthropic", Mode: "chat", SupportsPromptCaching: true,
-	}
-	openAIGPT56SolFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   5e-06,
-		InputCostPerTokenPriority:           1e-05,
-		OutputCostPerToken:                  3e-05,
-		OutputCostPerTokenPriority:          6e-05,
-		CacheCreationInputTokenCost:         6.25e-06,
-		CacheCreationInputTokenCostPriority: 1.25e-05,
-		CacheReadInputTokenCost:             5e-07,
-		CacheReadInputTokenCostPriority:     1e-06,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	openAIGPT56TerraFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   2e-06,
-		InputCostPerTokenPriority:           4e-06,
-		OutputCostPerToken:                  1.2e-05,
-		OutputCostPerTokenPriority:          2.4e-05,
-		CacheCreationInputTokenCost:         2.5e-06,
-		CacheCreationInputTokenCostPriority: 5e-06,
-		CacheReadInputTokenCost:             2e-07,
-		CacheReadInputTokenCostPriority:     4e-07,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	openAIGPT56LunaFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   2e-07,
-		InputCostPerTokenPriority:           4e-07,
-		OutputCostPerToken:                  1.2e-06,
-		OutputCostPerTokenPriority:          2.4e-06,
-		CacheCreationInputTokenCost:         2.5e-07,
-		CacheCreationInputTokenCostPriority: 5e-07,
-		CacheReadInputTokenCost:             2e-08,
-		CacheReadInputTokenCostPriority:     4e-08,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
-	}
-	openAIGPT54MiniFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:       7.5e-07,
-		OutputCostPerToken:      4.5e-06,
-		CacheReadInputTokenCost: 7.5e-08,
-		LiteLLMProvider:         "openai",
-		Mode:                    "chat",
-		SupportsPromptCaching:   true,
-	}
-	openAIGPT54NanoFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:       2e-07,
-		OutputCostPerToken:      1.25e-06,
-		CacheReadInputTokenCost: 2e-08,
-		LiteLLMProvider:         "openai",
-		Mode:                    "chat",
-		SupportsPromptCaching:   true,
-	}
+	bedrockRegionPrefixRe  = regexp.MustCompile(`^(?:us|eu|ap|global|au|ca|jp|us-gov)\.(?:anthropic|amazon|meta|mistral|cohere|deepseek|google|openai|qwen|xai|moonshot|zhipu|minimax|ai21|stability|twelvelabs|writer|nvidia)\.`)
+	bedrockVendorPrefixRe  = regexp.MustCompile(`^(?:anthropic|amazon|meta|mistral|cohere|deepseek|google|openai|qwen|xai|moonshot|zhipu|minimax|ai21|stability|twelvelabs|writer|nvidia)\.`)
+	bedrockVersionSuffixRe = regexp.MustCompile(`-v\d+(?::\d+)?$`)
+	vertexDateSuffixRe     = regexp.MustCompile(`@(\d{8})$`)
 )
 
-// tokenPriceOverrides tracks explicit nonnegative rates from pricing.override_file.
-// Keep this provenance with the parsed card so billing never rereads the file.
+// tokenPriceOverrides tracks explicit nonnegative rates from custom pricing overrides.
+// Keep this provenance with the parsed card so model-specific fallback policies do not clobber explicit edits.
 type tokenPriceOverrides struct {
 	input, output, cacheRead bool
 }
 
-// LiteLLMModelPricing LiteLLM价格数据结构
-// 只保留我们需要的字段，使用指针来处理可能缺失的值
-type LiteLLMModelPricing struct {
+// CatalogModelPricing 模型目录价格数据结构（per-token USD，供 BillingService / 渠道展示使用）
+type CatalogModelPricing struct {
 	CacheCreationInputTokenCostExplicit bool `json:"-"`
 	priceOverrides                      tokenPriceOverrides
 	InputCostPerToken                   float64 `json:"input_cost_per_token"`
@@ -273,1001 +79,1095 @@ type LiteLLMModelPricing struct {
 	LongContextInputCostMultiplier      float64 `json:"long_context_input_cost_multiplier,omitempty"`
 	LongContextOutputCostMultiplier     float64 `json:"long_context_output_cost_multiplier,omitempty"`
 	SupportsServiceTier                 bool    `json:"supports_service_tier"`
-	LiteLLMProvider                     string  `json:"litellm_provider"`
+	Provider                            string  `json:"provider"`
 	Mode                                string  `json:"mode"`
 	SupportsPromptCaching               bool    `json:"supports_prompt_caching"`
-	OutputCostPerImage                  float64 `json:"output_cost_per_image"`       // 图片生成模型每张图片价格
-	OutputCostPerImageToken             float64 `json:"output_cost_per_image_token"` // 图片输出 token 价格
-	InputCostPerImageToken              float64 `json:"input_cost_per_image_token"`  // 图片输入 token 价格（如 gpt-image-2 图片编辑）
+	OutputCostPerImage                  float64 `json:"output_cost_per_image"`
+	OutputCostPerImageToken             float64 `json:"output_cost_per_image_token"`
+	InputCostPerImageToken              float64 `json:"input_cost_per_image_token"`
 	CacheReadInputImageTokenCost        float64 `json:"cache_read_input_image_token_cost"`
-	// CacheStorageCostPerTokenPerHour 显式上下文缓存存储单价（每 token 每小时，USD），一般由定价覆盖文件提供，
-	// 配置后优先于内置价（见 BillingService.CacheStoragePricePerTokenHour）。
-	CacheStorageCostPerTokenPerHour float64 `json:"cache_storage_cost_per_token_per_hour"`
-
-	// TokenPricingAbsent 表示源数据中 input/output token 价格均缺失（仅有图片价）。
-	// 此类条目只可用于图片计费，token 计费必须回退到 fallback 或 fail-closed，
-	// 否则 token 流量会被按 $0 计费。零值（false）表示条目具备 token 价格。
-	TokenPricingAbsent bool `json:"-"`
+	CacheStorageCostPerTokenPerHour     float64 `json:"cache_storage_cost_per_token_per_hour"`
+	TokenPricingAbsent                  bool    `json:"-"`
 }
 
-// PricingRemoteClient 远程价格数据获取接口
+// PricingRemoteClient 远程 models.dev 价格数据获取接口
 type PricingRemoteClient interface {
 	FetchPricingJSON(ctx context.Context, url string) ([]byte, error)
-	FetchHashText(ctx context.Context, url string) (string, error)
 }
 
-// LiteLLMRawEntry 用于解析原始JSON数据
-type LiteLLMRawEntry struct {
-	InputCostPerToken                   *float64 `json:"input_cost_per_token"`
-	InputCostPerTokenPriority           *float64 `json:"input_cost_per_token_priority"`
-	OutputCostPerToken                  *float64 `json:"output_cost_per_token"`
-	OutputCostPerTokenPriority          *float64 `json:"output_cost_per_token_priority"`
-	CacheCreationInputTokenCost         *float64 `json:"cache_creation_input_token_cost"`
-	CacheCreationInputTokenCostPriority *float64 `json:"cache_creation_input_token_cost_priority"`
-	CacheCreationInputTokenCostAbove1hr *float64 `json:"cache_creation_input_token_cost_above_1hr"`
-	CacheReadInputTokenCost             *float64 `json:"cache_read_input_token_cost"`
-	CacheReadInputTokenCostPriority     *float64 `json:"cache_read_input_token_cost_priority"`
-	LongContextInputTokenThreshold      *int     `json:"long_context_input_token_threshold"`
-	LongContextInputCostMultiplier      *float64 `json:"long_context_input_cost_multiplier"`
-	LongContextOutputCostMultiplier     *float64 `json:"long_context_output_cost_multiplier"`
-	SupportsServiceTier                 bool     `json:"supports_service_tier"`
-	LiteLLMProvider                     string   `json:"litellm_provider"`
-	Mode                                string   `json:"mode"`
-	SupportsPromptCaching               bool     `json:"supports_prompt_caching"`
-	OutputCostPerImage                  *float64 `json:"output_cost_per_image"`
-	OutputCostPerImageToken             *float64 `json:"output_cost_per_image_token"`
-	InputCostPerImageToken              *float64 `json:"input_cost_per_image_token"`
-	CacheReadInputImageTokenCost        *float64 `json:"cache_read_input_image_token_cost"`
-	CacheStorageCostPerTokenPerHour     *float64 `json:"cache_storage_cost_per_token_per_hour"`
+// --- Supported system provider specs (only sync models supported by sub2api) ---
+
+type supportedModelsDevProviderSpec struct {
+	ProviderID   string
+	Platform     string // primary sub2api platform ID
+	ChannelLabel string // display name for account-type matched channel
+	IsDefault    bool   // first-party default channel for Platform
+	IsAggregator bool   // multi-vendor aggregator platform (opencode_go / command_code / cline)
+	ModelFilter  func(origID string, raw modelsDevRawModel) bool
 }
 
-// PricingService 动态价格服务
+var openCodeGoKnownModelSet = func() map[string]struct{} {
+	ids := DefaultOpenCodeGoModelIDs()
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[strings.ToLower(strings.TrimSpace(id))] = struct{}{}
+	}
+	return set
+}()
+
+func hasPositiveTokenCost(raw modelsDevRawModel) bool {
+	if raw.Cost == nil {
+		return false
+	}
+	if raw.Cost.Input != nil && *raw.Cost.Input > 0 {
+		return true
+	}
+	if raw.Cost.Output != nil && *raw.Cost.Output > 0 {
+		return true
+	}
+	return false
+}
+
+func isClaudeCatalogModelID(origID string, _ modelsDevRawModel) bool {
+	return strings.HasPrefix(origID, "claude-")
+}
+
+func isGeminiCatalogModelID(origID string, _ modelsDevRawModel) bool {
+	return strings.HasPrefix(origID, "gemini-") ||
+		strings.HasPrefix(origID, "imagen-") ||
+		strings.HasPrefix(origID, "veo-") ||
+		strings.HasPrefix(origID, "deep-research-")
+}
+
+func isOpenCodeSupportedModel(origID string, raw modelsDevRawModel) bool {
+	if _, ok := openCodeGoKnownModelSet[origID]; ok {
+		return true
+	}
+	return hasPositiveTokenCost(raw) && !strings.HasSuffix(strings.ToLower(strings.TrimSpace(raw.ID)), "-free")
+}
+
+func isPaidAggregatorModel(_ string, raw modelsDevRawModel) bool {
+	return hasPositiveTokenCost(raw)
+}
+
+// supportedModelsDevProviders defines the exact models.dev providers relevant to sub2api's
+// registered platforms and account types. All other 300+ unrelated providers are ignored during sync.
+var supportedModelsDevProviders = []supportedModelsDevProviderSpec{
+	// Anthropic (OAuth / Setup-Token / API Key / Upstream + Bedrock + Vertex AI Anthropic)
+	{ProviderID: "anthropic", Platform: PlatformAnthropic, ChannelLabel: "Anthropic", IsDefault: true, ModelFilter: isClaudeCatalogModelID},
+	{ProviderID: "amazon-bedrock", Platform: PlatformAnthropic, ChannelLabel: "AWS Bedrock", IsDefault: false, ModelFilter: isClaudeCatalogModelID},
+	{ProviderID: "google-vertex-anthropic", Platform: PlatformAnthropic, ChannelLabel: "Vertex AI (Anthropic)", IsDefault: false, ModelFilter: isClaudeCatalogModelID},
+
+	// OpenAI (OAuth / API Key / Upstream)
+	{ProviderID: "openai", Platform: PlatformOpenAI, ChannelLabel: "OpenAI", IsDefault: true},
+
+	// Gemini (OAuth / API Key / Upstream + Vertex AI Gemini)
+	{ProviderID: "google", Platform: PlatformGemini, ChannelLabel: "Google AI", IsDefault: true, ModelFilter: isGeminiCatalogModelID},
+	{ProviderID: "google-vertex", Platform: PlatformGemini, ChannelLabel: "Vertex AI (Gemini)", IsDefault: false, ModelFilter: isGeminiCatalogModelID},
+
+	// Grok (xAI)
+	{ProviderID: "xai", Platform: PlatformGrok, ChannelLabel: "xAI", IsDefault: true},
+
+	// Kimi (Moonshot PayG + CN + Coding Plan)
+	{ProviderID: "moonshotai", Platform: PlatformKimi, ChannelLabel: "Moonshot", IsDefault: true},
+	{ProviderID: "moonshotai-cn", Platform: PlatformKimi, ChannelLabel: "Moonshot CN", IsDefault: false},
+	{ProviderID: "kimi-code-plan-global", Platform: PlatformKimi, ChannelLabel: "Kimi Coding Plan", IsDefault: false},
+	{ProviderID: "kimi-code-plan-cn", Platform: PlatformKimi, ChannelLabel: "Kimi Coding Plan (CN)", IsDefault: false},
+
+	// Zhipu GLM (Zhipu PayG + Z.AI + Coding Plan)
+	{ProviderID: "zhipuai", Platform: PlatformZhipu, ChannelLabel: "Zhipu AI", IsDefault: true},
+	{ProviderID: "zai", Platform: PlatformZhipu, ChannelLabel: "Z.AI", IsDefault: false},
+	{ProviderID: "zhipuai-coding-plan", Platform: PlatformZhipu, ChannelLabel: "Zhipu Coding Plan", IsDefault: false},
+	{ProviderID: "zai-coding-plan", Platform: PlatformZhipu, ChannelLabel: "Z.AI Coding Plan", IsDefault: false},
+
+	// DeepSeek
+	{ProviderID: "deepseek", Platform: PlatformDeepseek, ChannelLabel: "DeepSeek", IsDefault: true},
+
+	// MiniMax (PayG + CN + Coding Plan)
+	{ProviderID: "minimax", Platform: PlatformMiniMax, ChannelLabel: "MiniMax", IsDefault: true},
+	{ProviderID: "minimax-cn", Platform: PlatformMiniMax, ChannelLabel: "MiniMax CN", IsDefault: false},
+	{ProviderID: "minimax-coding-plan", Platform: PlatformMiniMax, ChannelLabel: "MiniMax Coding Plan", IsDefault: false},
+	{ProviderID: "minimax-cn-coding-plan", Platform: PlatformMiniMax, ChannelLabel: "MiniMax Coding Plan (CN)", IsDefault: false},
+
+	// Multi-model registered sub2api platforms
+	{ProviderID: "opencode-go", Platform: PlatformOpenCodeGo, ChannelLabel: "OpenCode Go", IsDefault: true, IsAggregator: true, ModelFilter: isOpenCodeSupportedModel},
+	{ProviderID: "commandcode", Platform: PlatformCommandCode, ChannelLabel: "Command Code", IsDefault: true, IsAggregator: true, ModelFilter: isPaidAggregatorModel},
+	{ProviderID: "cline-pass", Platform: PlatformCline, ChannelLabel: "Cline", IsDefault: true, IsAggregator: true, ModelFilter: isPaidAggregatorModel},
+	{ProviderID: "typesafe", Platform: PlatformTypeSafe, ChannelLabel: "TypeSafe", IsDefault: true},
+}
+
+var supportedModelsDevProviderMap = func() map[string]supportedModelsDevProviderSpec {
+	m := make(map[string]supportedModelsDevProviderSpec, len(supportedModelsDevProviders))
+	for _, spec := range supportedModelsDevProviders {
+		m[spec.ProviderID] = spec
+	}
+	return m
+}()
+
+// ResolveAccountPricingProvider automatically maps an Account (platform + account type +
+// coding plan / CN host) to its corresponding models.dev channel ID.
+func ResolveAccountPricingProvider(account *Account, model string) string {
+	if account == nil {
+		return ""
+	}
+	switch account.Platform {
+	case PlatformAnthropic:
+		if account.IsBedrock() {
+			return "amazon-bedrock"
+		}
+		if account.IsVertexServiceAccount() {
+			return "google-vertex-anthropic"
+		}
+		return "anthropic"
+	case PlatformOpenAI:
+		return "openai"
+	case PlatformGemini:
+		if account.IsVertexServiceAccount() {
+			return "google-vertex"
+		}
+		return "google"
+	case PlatformAntigravity:
+		modelLower := strings.ToLower(strings.TrimSpace(model))
+		if strings.Contains(modelLower, "gemini") || strings.Contains(modelLower, "imagen") {
+			return "google"
+		}
+		return "anthropic"
+	case PlatformGrok:
+		return "xai"
+	case PlatformDeepseek:
+		return "deepseek"
+	case PlatformKimi:
+		baseURL := strings.ToLower(strings.TrimSpace(account.GetOpenAIFormatBaseURL()))
+		isCN := strings.Contains(baseURL, "moonshot.cn") || strings.Contains(baseURL, "kimi.com")
+		if account.IsCodingPlan() {
+			if isCN {
+				return "kimi-code-plan-cn"
+			}
+			return "kimi-code-plan-global"
+		}
+		if isCN {
+			return "moonshotai-cn"
+		}
+		return "moonshotai"
+	case PlatformZhipu:
+		baseURL := strings.ToLower(strings.TrimSpace(account.GetOpenAIFormatBaseURL()))
+		isZAI := strings.Contains(baseURL, "z.ai")
+		if account.IsCodingPlan() {
+			if isZAI {
+				return "zai-coding-plan"
+			}
+			return "zhipuai-coding-plan"
+		}
+		if isZAI {
+			return "zai"
+		}
+		return "zhipuai"
+	case PlatformMiniMax:
+		baseURL := strings.ToLower(strings.TrimSpace(account.GetOpenAIFormatBaseURL()))
+		isCN := strings.Contains(baseURL, "minimaxi.com") || strings.Contains(baseURL, "minimax.cn")
+		if account.IsCodingPlan() {
+			if isCN {
+				return "minimax-cn-coding-plan"
+			}
+			return "minimax-coding-plan"
+		}
+		if isCN {
+			return "minimax-cn"
+		}
+		return "minimax"
+	case PlatformOpenCodeGo:
+		return "opencode-go"
+	case PlatformCommandCode:
+		return "commandcode"
+	case PlatformCline:
+		return "cline-pass"
+	case PlatformTypeSafe:
+		return "typesafe"
+	default:
+		if spec, ok := domain.LookupPlatform(account.Platform); ok && spec.ModelsDevProvider != "" {
+			return spec.ModelsDevProvider
+		}
+		return ""
+	}
+}
+
+// --- models.dev raw API JSON structures ---
+
+type modelsDevRawProvider struct {
+	ID     string                       `json:"id"`
+	Name   string                       `json:"name"`
+	API    string                       `json:"api,omitempty"`
+	Models map[string]modelsDevRawModel `json:"models"`
+}
+
+type modelsDevRawModalities struct {
+	Input  []string `json:"input,omitempty"`
+	Output []string `json:"output,omitempty"`
+}
+
+type modelsDevRawLimit struct {
+	Context int `json:"context,omitempty"`
+	Input   int `json:"input,omitempty"`
+	Output  int `json:"output,omitempty"`
+}
+
+type modelsDevRawCostTierSpec struct {
+	Type string `json:"type"`
+	Size int    `json:"size"`
+}
+
+type modelsDevRawCostTier struct {
+	Input      *float64                  `json:"input,omitempty"`
+	Output     *float64                  `json:"output,omitempty"`
+	CacheRead  *float64                  `json:"cache_read,omitempty"`
+	CacheWrite *float64                  `json:"cache_write,omitempty"`
+	Tier       *modelsDevRawCostTierSpec `json:"tier,omitempty"`
+}
+
+type modelsDevRawContextOver200k struct {
+	Input      *float64 `json:"input,omitempty"`
+	Output     *float64 `json:"output,omitempty"`
+	CacheRead  *float64 `json:"cache_read,omitempty"`
+	CacheWrite *float64 `json:"cache_write,omitempty"`
+}
+
+type modelsDevRawCost struct {
+	Input           *float64                     `json:"input,omitempty"`
+	Output          *float64                     `json:"output,omitempty"`
+	CacheRead       *float64                     `json:"cache_read,omitempty"`
+	CacheWrite      *float64                     `json:"cache_write,omitempty"`
+	Reasoning       *float64                     `json:"reasoning,omitempty"`
+	InputAudio      *float64                     `json:"input_audio,omitempty"`
+	OutputAudio     *float64                     `json:"output_audio,omitempty"`
+	Tiers           []modelsDevRawCostTier       `json:"tiers,omitempty"`
+	ContextOver200k *modelsDevRawContextOver200k `json:"context_over_200k,omitempty"`
+}
+
+type modelsDevRawModel struct {
+	ID               string                  `json:"id"`
+	Name             string                  `json:"name,omitempty"`
+	Family           string                  `json:"family,omitempty"`
+	ReleaseDate      string                  `json:"release_date,omitempty"`
+	Status           string                  `json:"status,omitempty"`
+	CanonicalModelID string                  `json:"canonical_model_id,omitempty"`
+	Modalities       *modelsDevRawModalities `json:"modalities,omitempty"`
+	Limit            *modelsDevRawLimit      `json:"limit,omitempty"`
+	Cost             *modelsDevRawCost       `json:"cost,omitempty"`
+}
+
+// --- Public DTOs & Store structures ---
+
+// PricingSyncConfig controls models.dev synchronization.
+type PricingSyncConfig struct {
+	AutoSyncEnabled   bool   `json:"auto_sync_enabled"`
+	SyncIntervalHours int    `json:"sync_interval_hours"`
+	ModelsDevURL      string `json:"models_dev_url"`
+}
+
+// PricingSyncMetadata records the latest models.dev sync result and filtered cache stats.
+type PricingSyncMetadata struct {
+	LastSyncAt           *time.Time `json:"last_sync_at,omitempty"`
+	LastSyncStatus       string     `json:"last_sync_status"`
+	LastSyncError        string     `json:"last_sync_error,omitempty"`
+	CacheHash            string     `json:"cache_hash,omitempty"`
+	ChannelCount         int        `json:"channel_count"`
+	ModelCount           int        `json:"model_count"`
+	RawEntryCount        int        `json:"raw_entry_count"`
+	LastSkippedLocked    int        `json:"last_skipped_locked,omitempty"`
+	LastOverwrittenCount int        `json:"last_overwritten_count,omitempty"`
+}
+
+// PricingSyncStatus aggregates sync config, metadata, and override/lock counts for the admin UI.
+type PricingSyncStatus struct {
+	Config               PricingSyncConfig   `json:"config"`
+	Meta                 PricingSyncMetadata `json:"meta"`
+	DefaultOverrideCount int                 `json:"default_override_count"`
+	ChannelOverrideCount int                 `json:"channel_override_count"`
+	LockedChannelCount   int                 `json:"locked_channel_count"`
+	UnlockedCustomCount  int                 `json:"unlocked_custom_count"`
+	GroupOverrideCounts  map[string]int      `json:"group_override_counts"`
+	CacheLoaded          bool                `json:"cache_loaded"`
+}
+
+// TokenPricingPerMillion represents human-friendly USD per 1M token prices.
+type TokenPricingPerMillion struct {
+	DisplayName                   string   `json:"display_name,omitempty"`
+	InputPerMillion               float64  `json:"input_per_million"`
+	OutputPerMillion              float64  `json:"output_per_million"`
+	CacheReadPerMillion           float64  `json:"cache_read_per_million"`
+	CacheWritePerMillion          float64  `json:"cache_write_per_million"`
+	CacheWrite1hPerMillion        *float64 `json:"cache_write_1h_per_million,omitempty"`
+	CacheStoragePerMillionPerHour float64  `json:"cache_storage_per_million_per_hour,omitempty"`
+	LongContextThreshold          int      `json:"long_context_threshold,omitempty"`
+	LongContextInputMult          float64  `json:"long_context_input_multiplier,omitempty"`
+	LongContextOutputMult         float64  `json:"long_context_output_multiplier,omitempty"`
+}
+
+// ModelPricingOverride stores a custom price override or locked price snapshot
+// in Default, Account-Type Channel, or System Group scope.
+type ModelPricingOverride struct {
+	Platform  string                 `json:"platform,omitempty"`
+	Custom    TokenPricingPerMillion `json:"custom"`
+	Locked    bool                   `json:"locked,omitempty"`
+	IsCustom  bool                   `json:"is_custom,omitempty"`
+	UpdatedAt time.Time              `json:"updated_at"`
+}
+
+// PricingOverridesState persists global default edits/locks, per-channel edits/locks,
+// and per-system-group independent pricing overrides.
+type PricingOverridesState struct {
+	Default  map[string]ModelPricingOverride            `json:"default"`
+	Channels map[string]map[string]ModelPricingOverride `json:"channels,omitempty"`
+	Groups   map[string]map[string]ModelPricingOverride `json:"groups"`
+}
+
+// UpsertPricingOverrideInput defines parameters for editing pricing at Default, Channel, or Group scope.
+type UpsertPricingOverrideInput struct {
+	GroupID   *int64
+	ChannelID string
+	ModelID   string
+	Platform  string
+	Custom    TokenPricingPerMillion
+	Locked    *bool
+}
+
+// AccountChannelPriceEntry represents one account-type matched channel price cached from models.dev
+// (with any custom edit and/or sync lock applied).
+type AccountChannelPriceEntry struct {
+	ChannelID     string                  `json:"channel_id"`
+	ChannelName   string                  `json:"channel_name"`
+	Platform      string                  `json:"platform"`
+	RawModelID    string                  `json:"raw_model_id"`
+	IsDefault     bool                    `json:"is_default"`
+	IsOverridden  bool                    `json:"is_overridden"`
+	IsLocked      bool                    `json:"is_locked"`
+	Pricing       TokenPricingPerMillion  `json:"pricing"`
+	SyncedPricing *TokenPricingPerMillion `json:"synced_pricing,omitempty"`
+	UpdatedAt     *time.Time              `json:"updated_at,omitempty"`
+	catalog       *CatalogModelPricing
+	score         int
+}
+
+// SupportedModelEntry holds all cached channel prices for one system-supported model ID.
+type SupportedModelEntry struct {
+	ModelID            string
+	DisplayName        string
+	Family             string
+	ReleaseDate        string
+	Platform           string   // primary system platform (anthropic / openai / gemini / grok / kimi / zhipu / deepseek / minimax / opencode_go / command_code / cline / typesafe)
+	Platforms          []string // all system platforms that support this model (including antigravity for claude/gemini)
+	DefaultChannelID   string
+	DefaultChannelName string
+	DefaultPricing     TokenPricingPerMillion
+	defaultCatalog     *CatalogModelPricing
+	Channels           []AccountChannelPriceEntry
+	channelByID        map[string]*AccountChannelPriceEntry
+	rawByChannel       map[string]map[string]*CatalogModelPricing // channelID -> lower(rawModelID) -> catalog
+}
+
+// SupportedPlatformSummary summarizes available system platforms in the pricing catalog.
+type SupportedPlatformSummary struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	ModelCount int    `json:"model_count"`
+}
+
+// ModelPricingListQuery defines query filters for listing system-supported model pricing.
+type ModelPricingListQuery struct {
+	GroupID       int64
+	GroupPlatform string // resolved from system GroupRepository when GroupID > 0
+	Platform      string // optional platform filter (used when GroupID == 0 or composite group)
+	Search        string
+	Filter        string // "all" | "overridden" | "custom"
+	Page          int
+	PageSize      int
+}
+
+// ModelPricingListItem is one top-level model row in the admin Model Pricing multi-level table.
+type ModelPricingListItem struct {
+	ModelID              string                     `json:"model_id"`
+	DisplayName          string                     `json:"display_name"`
+	Platform             string                     `json:"platform"`
+	Platforms            []string                   `json:"platforms"`
+	Family               string                     `json:"family,omitempty"`
+	ReleaseDate          string                     `json:"release_date,omitempty"`
+	Source               string                     `json:"source"` // "default_auto" | "default_custom" | "inherited_default" | "group_custom"
+	IsGroupOverridden    bool                       `json:"is_group_overridden"`
+	IsDefaultModified    bool                       `json:"is_default_modified"`
+	IsDefaultLocked      bool                       `json:"is_default_locked"`
+	IsCustomOnly         bool                       `json:"is_custom_only"`
+	DefaultChannelID     string                     `json:"default_channel_id,omitempty"`
+	DefaultChannelName   string                     `json:"default_channel_name,omitempty"`
+	ChannelPrices        []AccountChannelPriceEntry `json:"channel_prices"`
+	EffectivePricing     TokenPricingPerMillion     `json:"effective_pricing"`
+	DefaultPricing       *TokenPricingPerMillion    `json:"default_pricing,omitempty"`
+	GroupOverrideCount   int                        `json:"group_override_count"`
+	ChannelOverrideCount int                        `json:"channel_override_count"`
+	LockedChannelCount   int                        `json:"locked_channel_count"`
+	UpdatedAt            *time.Time                 `json:"updated_at,omitempty"`
+}
+
+// ModelPricingListResult is the paginated response for listing model pricing.
+type ModelPricingListResult struct {
+	Items         []ModelPricingListItem     `json:"items"`
+	Total         int                        `json:"total"`
+	Page          int                        `json:"page"`
+	PageSize      int                        `json:"page_size"`
+	GroupPlatform string                     `json:"group_platform,omitempty"`
+	Platforms     []SupportedPlatformSummary `json:"platforms"`
+}
+
+// PricingService 动态价格服务（基于 models.dev 过滤缓存 + 账户类型自动匹配渠道 + 系统分组独立定价）
 type PricingService struct {
 	cfg          *config.Config
 	remoteClient PricingRemoteClient
-	mu           sync.RWMutex
-	pricingData  map[string]*LiteLLMModelPricing
-	lastUpdated  time.Time
-	localHash    string
-	// fallback/override 文件在最近一次成功重建时的内容指纹，定时器据此判断是否
-	// 需要从本地目录缓存重建叠加层。
-	customFilesHash string
+	settingRepo  SettingRepository
 
-	// 停止信号
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	mu                   sync.RWMutex
+	syncMu               sync.Mutex
+	syncConfig           PricingSyncConfig
+	syncMeta             PricingSyncMetadata
+	overrides            PricingOverridesState
+	models               map[string]*SupportedModelEntry // normalized original model ID -> system-supported model entry
+	providerModels       map[string][]string             // models.dev provider_id -> sorted original model IDs
+	platformSummaries    []SupportedPlatformSummary
+	effectiveDefaultData map[string]*CatalogModelPricing // materialized default effective catalog for hot path
+	lastUpdated          time.Time
+	localHash            string
+
+	stopCh           chan struct{}
+	schedulerResetCh chan struct{}
+	stopOnce         sync.Once
+	wg               sync.WaitGroup
 }
 
 // NewPricingService 创建价格服务
 func NewPricingService(cfg *config.Config, remoteClient PricingRemoteClient) *PricingService {
-	s := &PricingService{
+	syncCfg := defaultSyncConfigFromAppConfig(cfg)
+	return &PricingService{
 		cfg:          cfg,
 		remoteClient: remoteClient,
-		pricingData:  make(map[string]*LiteLLMModelPricing),
-		stopCh:       make(chan struct{}),
+		syncConfig:   syncCfg,
+		syncMeta: PricingSyncMetadata{
+			LastSyncStatus: PricingSyncStatusNever,
+		},
+		overrides: PricingOverridesState{
+			Default:  make(map[string]ModelPricingOverride),
+			Channels: make(map[string]map[string]ModelPricingOverride),
+			Groups:   make(map[string]map[string]ModelPricingOverride),
+		},
+		models:               make(map[string]*SupportedModelEntry),
+		providerModels:       make(map[string][]string),
+		effectiveDefaultData: make(map[string]*CatalogModelPricing),
+		stopCh:               make(chan struct{}),
+		schedulerResetCh:     make(chan struct{}, 1),
 	}
-	return s
 }
 
-// Initialize 初始化价格服务
-func (s *PricingService) Initialize() error {
-	// 确保数据目录存在
-	if err := os.MkdirAll(s.cfg.Pricing.DataDir, 0755); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to create data directory: %v", err)
+// SetSettingRepository attaches optional DB persistence for sync config, metadata, and overrides.
+func (s *PricingService) SetSettingRepository(repo SettingRepository) {
+	if s == nil {
+		return
 	}
+	s.mu.Lock()
+	s.settingRepo = repo
+	s.mu.Unlock()
+}
 
-	// 首次加载价格数据
-	if err := s.checkAndUpdatePricing(); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Initial load failed, using fallback: %v", err)
-		if err := s.useFallbackPricing(); err != nil {
-			return fmt.Errorf("failed to load pricing data: %w", err)
+func defaultSyncConfigFromAppConfig(cfg *config.Config) PricingSyncConfig {
+	out := PricingSyncConfig{
+		AutoSyncEnabled:   true,
+		SyncIntervalHours: DefaultPricingSyncIntervalHours,
+		ModelsDevURL:      DefaultModelsDevURL,
+	}
+	if cfg == nil {
+		return out
+	}
+	out.AutoSyncEnabled = cfg.Pricing.AutoSyncEnabled
+	if cfg.Pricing.SyncIntervalHours >= MinPricingSyncIntervalHours && cfg.Pricing.SyncIntervalHours <= MaxPricingSyncIntervalHours {
+		out.SyncIntervalHours = cfg.Pricing.SyncIntervalHours
+	}
+	if u := strings.TrimSpace(cfg.Pricing.ModelsDevURL); u != "" {
+		out.ModelsDevURL = u
+	}
+	return out
+}
+
+// Initialize 初始化价格服务：加载数据库配置与分组覆盖 -> 加载本地缓存 -> 启动定时同步器。
+func (s *PricingService) Initialize() error {
+	if s.cfg != nil && strings.TrimSpace(s.cfg.Pricing.DataDir) != "" {
+		if err := os.MkdirAll(s.cfg.Pricing.DataDir, 0755); err != nil {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to create data directory: %v", err)
 		}
 	}
 
-	// 启动定时更新
+	s.loadPersistedState(context.Background())
+
+	cachePath := s.getCatalogCachePath()
+	cacheLoaded := false
+	cacheStale := true
+	if cachePath != "" {
+		if err := s.loadCatalogFromDisk(cachePath); err == nil {
+			cacheLoaded = true
+			if info, statErr := os.Stat(cachePath); statErr == nil {
+				s.mu.RLock()
+				interval := time.Duration(s.normalizedSyncIntervalHoursLocked()) * time.Hour
+				s.mu.RUnlock()
+				cacheStale = time.Since(info.ModTime()) >= interval
+			}
+		} else if !os.IsNotExist(err) {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to load cached models.dev catalog: %v", err)
+		}
+	}
+
+	s.mu.Lock()
+	s.rebuildEffectiveDefaultLocked()
+	modelCount := len(s.effectiveDefaultData)
+	autoSync := s.syncConfig.AutoSyncEnabled && strings.TrimSpace(s.syncConfig.ModelsDevURL) != ""
+	s.mu.Unlock()
+
 	s.startUpdateScheduler()
 
-	s.mu.RLock()
-	modelCount := len(s.pricingData)
-	s.mu.RUnlock()
-	logger.LegacyPrintf("service.pricing", "[Pricing] Service initialized with %d models", modelCount)
+	if autoSync && s.remoteClient != nil && (!cacheLoaded || cacheStale) {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			ctx, cancel := s.backgroundSyncContext(60 * time.Second)
+			defer cancel()
+			if _, err := s.SyncNow(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.LegacyPrintf("service.pricing", "[Pricing] Initial models.dev sync failed: %v", err)
+			}
+		}()
+	}
+
+	logger.LegacyPrintf("service.pricing", "[Pricing] Service initialized (models.dev cache_loaded=%t, effective_models=%d)", cacheLoaded, modelCount)
 	return nil
+}
+
+func (s *PricingService) backgroundSyncContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-s.stopCh:
+			cancel()
+		case <-done:
+		}
+	}()
+	return ctx, func() {
+		close(done)
+		cancel()
+	}
 }
 
 // Stop 停止价格服务
 func (s *PricingService) Stop() {
-	close(s.stopCh)
+	if s == nil {
+		return
+	}
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+	})
 	s.wg.Wait()
 	logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Service stopped")
 }
 
-// startUpdateScheduler 启动定时调度器：每个周期先做远程目录哈希同步（配置了 remote_url 时），
-// 再比对 fallback/override 文件指纹做本地热重载（配置了任一文件时）。两者都未配置则不启动。
 func (s *PricingService) startUpdateScheduler() {
-	if s == nil || s.cfg == nil {
+	if s == nil {
 		return
 	}
-	remoteEnabled := strings.TrimSpace(s.cfg.Pricing.RemoteURL) != ""
-	watchCustom := s.hasCustomPricingFiles()
-	if !remoteEnabled {
-		logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Remote sync disabled: pricing remote URL is empty")
-	}
-	if !remoteEnabled && !watchCustom {
-		return
-	}
-
-	hashInterval := time.Duration(s.cfg.Pricing.HashCheckIntervalMinutes) * time.Minute
-	if hashInterval < time.Minute {
-		hashInterval = 10 * time.Minute
-	}
-
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		ticker := time.NewTicker(hashInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				if remoteEnabled {
-					if err := s.syncWithRemote(); err != nil {
-						logger.LegacyPrintf("service.pricing", "[Pricing] Sync failed: %v", err)
+		var timer *time.Timer
+		resetTimer := func() <-chan time.Time {
+			if timer != nil {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
 					}
 				}
-				if watchCustom {
-					s.reloadIfCustomFilesChanged()
+				timer = nil
+			}
+			s.mu.RLock()
+			enabled := s.syncConfig.AutoSyncEnabled && strings.TrimSpace(s.syncConfig.ModelsDevURL) != "" && s.remoteClient != nil
+			hours := s.normalizedSyncIntervalHoursLocked()
+			s.mu.RUnlock()
+			if !enabled {
+				return nil
+			}
+			timer = time.NewTimer(time.Duration(hours) * time.Hour)
+			return timer.C
+		}
+
+		tickCh := resetTimer()
+		for {
+			select {
+			case <-tickCh:
+				ctx, cancel := s.backgroundSyncContext(60 * time.Second)
+				if _, err := s.SyncNow(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.LegacyPrintf("service.pricing", "[Pricing] Scheduled models.dev sync failed: %v", err)
 				}
+				cancel()
+				tickCh = resetTimer()
+			case <-s.schedulerResetCh:
+				tickCh = resetTimer()
 			case <-s.stopCh:
+				if timer != nil {
+					timer.Stop()
+				}
 				return
 			}
 		}
 	}()
-
-	logger.LegacyPrintf("service.pricing", "[Pricing] Update scheduler started (check every %v, remote sync=%t, custom file watch=%t)", hashInterval, remoteEnabled, watchCustom)
 }
 
-// checkAndUpdatePricing 检查并更新价格数据
-func (s *PricingService) checkAndUpdatePricing() error {
-	pricingFile := s.getPricingFilePath()
-
-	// 检查本地文件是否存在
-	if _, err := os.Stat(pricingFile); os.IsNotExist(err) {
-		logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Local pricing file not found, downloading...")
-		return s.downloadPricingData()
+func (s *PricingService) signalSchedulerReset() {
+	if s == nil || s.schedulerResetCh == nil {
+		return
 	}
-
-	// 先加载本地文件（确保服务可用），再检查是否需要更新
-	if err := s.loadPricingData(pricingFile); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to load local file, downloading: %v", err)
-		return s.downloadPricingData()
+	select {
+	case s.schedulerResetCh <- struct{}{}:
+	default:
 	}
-
-	// 如果配置了哈希URL，通过远程哈希检查是否有更新。本地文件已加载，服务已可用，
-	// 校验放到后台做：远端慢或不通时不挡启动与监听（fetchRemoteHash 请求挂住时会一直等到客户端超时）。
-	if s.cfg.Pricing.HashURL != "" {
-		go s.checkRemoteHashOnStartup()
-		return nil
-	}
-
-	// 没有哈希URL时，基于文件年龄检查
-	info, err := os.Stat(pricingFile)
-	if err != nil {
-		return nil // 已加载本地文件
-	}
-
-	fileAge := time.Since(info.ModTime())
-	maxAge := time.Duration(s.cfg.Pricing.UpdateIntervalHours) * time.Hour
-
-	if fileAge > maxAge {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Local file is %v old, updating...", fileAge.Round(time.Hour))
-		if err := s.downloadPricingData(); err != nil {
-			logger.LegacyPrintf("service.pricing", "[Pricing] Download failed, using existing file: %v", err)
-		}
-	}
-
-	return nil
 }
 
-// checkRemoteHashOnStartup 启动后在后台比对远程哈希，不同则下载；失败只记日志，沿用已加载的本地文件。
-func (s *PricingService) checkRemoteHashOnStartup() {
-	remoteHash, err := s.fetchRemoteHash()
-	if err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to fetch remote hash on startup: %v", err)
+func (s *PricingService) normalizedSyncIntervalHoursLocked() int {
+	h := s.syncConfig.SyncIntervalHours
+	if h < MinPricingSyncIntervalHours {
+		return DefaultPricingSyncIntervalHours
+	}
+	if h > MaxPricingSyncIntervalHours {
+		return MaxPricingSyncIntervalHours
+	}
+	return h
+}
+
+// --- Persistence helpers ---
+
+func (s *PricingService) loadPersistedState(ctx context.Context) {
+	s.mu.RLock()
+	repo := s.settingRepo
+	s.mu.RUnlock()
+	if repo == nil {
 		return
 	}
 
-	s.mu.RLock()
-	localHash := s.localHash
-	s.mu.RUnlock()
-
-	if localHash == "" || remoteHash != localHash {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Remote hash differs on startup (local=%s remote=%s), downloading...",
-			localHash[:min(8, len(localHash))], remoteHash[:min(8, len(remoteHash))])
-		if err := s.downloadPricingData(); err != nil {
-			logger.LegacyPrintf("service.pricing", "[Pricing] Download failed, using existing file: %v", err)
-		}
-	}
-}
-
-// syncWithRemote 与远程同步（基于哈希校验）
-func (s *PricingService) syncWithRemote() error {
-	// 如果配置了哈希URL，从远程获取哈希进行比对
-	if s.cfg.Pricing.HashURL != "" {
-		remoteHash, err := s.fetchRemoteHash()
-		if err != nil {
-			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to fetch remote hash: %v", err)
-			return nil // 哈希获取失败不影响正常使用
-		}
-
-		s.mu.RLock()
-		localHash := s.localHash
-		s.mu.RUnlock()
-
-		if localHash == "" || remoteHash != localHash {
-			logger.LegacyPrintf("service.pricing", "[Pricing] Remote hash differs (local=%s remote=%s), downloading new version...",
-				localHash[:min(8, len(localHash))], remoteHash[:min(8, len(remoteHash))])
-			return s.downloadPricingData()
-		}
-		logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Hash check passed, no update needed")
-		return nil
-	}
-
-	// 没有哈希URL时，基于时间检查
-	pricingFile := s.getPricingFilePath()
-	info, err := os.Stat(pricingFile)
+	values, err := repo.GetMultiple(ctx, []string{
+		SettingKeyModelPricingSyncConfig,
+		SettingKeyModelPricingSyncMeta,
+		SettingKeyModelPricingOverrides,
+	})
 	if err != nil {
-		return s.downloadPricingData()
-	}
-
-	fileAge := time.Since(info.ModTime())
-	maxAge := time.Duration(s.cfg.Pricing.UpdateIntervalHours) * time.Hour
-
-	if fileAge > maxAge {
-		logger.LegacyPrintf("service.pricing", "[Pricing] File is %v old, downloading...", fileAge.Round(time.Hour))
-		return s.downloadPricingData()
-	}
-
-	return nil
-}
-
-// hasCustomPricingFiles 报告是否配置了 fallback/override 任一文件路径（不要求文件存在）。
-func (s *PricingService) hasCustomPricingFiles() bool {
-	if s == nil || s.cfg == nil {
-		return false
-	}
-	return strings.TrimSpace(s.cfg.Pricing.FallbackFile) != "" || strings.TrimSpace(s.cfg.Pricing.OverrideFile) != ""
-}
-
-// customPricingFilesFingerprint 返回 fallback、override 两个文件当前内容的联合 sha256。
-// 每个文件以"长度前缀 + 正文"参与计算，不可读的文件按空正文处理；未配置任何文件返回空串。
-func (s *PricingService) customPricingFilesFingerprint() string {
-	if !s.hasCustomPricingFiles() {
-		return ""
-	}
-	h := sha256.New()
-	for _, path := range []string{s.cfg.Pricing.FallbackFile, s.cfg.Pricing.OverrideFile} {
-		var body []byte
-		if p := strings.TrimSpace(path); p != "" {
-			body, _ = os.ReadFile(p)
-		}
-		var size [8]byte
-		binary.BigEndian.PutUint64(size[:], uint64(len(body)))
-		_, _ = h.Write(size[:])
-		_, _ = h.Write(body)
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// validateCustomPricingFiles 要求每个已配置且存在的 fallback/override 文件可读且为 JSON
-// 对象，任一不满足即返回带路径的错误；文件不存在视为该层为空，属合法状态。
-func (s *PricingService) validateCustomPricingFiles() error {
-	for _, path := range []string{s.cfg.Pricing.FallbackFile, s.cfg.Pricing.OverrideFile} {
-		p := strings.TrimSpace(path)
-		if p == "" {
-			continue
-		}
-		body, err := os.ReadFile(p)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		var entries map[string]json.RawMessage
-		if err := json.Unmarshal(body, &entries); err != nil {
-			return fmt.Errorf("%s: %w", p, err)
-		}
-	}
-	return nil
-}
-
-// reloadIfCustomFilesChanged 比对 fallback/override 文件指纹，与最近一次重建时不同则从
-// 本地目录缓存重建内存数据。文件被删除视为该层清空，照常重建；文件存在但不可读或不是
-// JSON 对象时保留当前数据且不更新指纹，下一轮会再次尝试并重复告警。目录正文与远程同步
-// 锚点(localHash)不受本路径影响。
-func (s *PricingService) reloadIfCustomFilesChanged() {
-	fingerprint := s.customPricingFilesFingerprint()
-	s.mu.RLock()
-	unchanged := fingerprint == s.customFilesHash
-	s.mu.RUnlock()
-	if unchanged {
+		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to load persisted state: %v", err)
 		return
-	}
-	if err := s.reloadCustomPricingLayers(); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing file changed but reload failed: %v", err)
-	}
-}
-
-// reloadCustomPricingLayers 读取本地目录缓存并重新叠加 fallback/override，只替换内存数据
-// 与叠加层指纹。
-func (s *PricingService) reloadCustomPricingLayers() error {
-	pricingFile := s.getPricingFilePath()
-	// 定价层文件可能在读取期间被替换。只有构建前后指纹一致时才提交，
-	// 否则丢弃这次混合快照并重试，避免短暂应用不匹配的 fallback/override。
-	var data map[string]*LiteLLMModelPricing
-	var fingerprint string
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		if validateErr := s.validateCustomPricingFiles(); validateErr != nil {
-			return fmt.Errorf("validate custom pricing files: %w", validateErr)
-		}
-		before := s.customPricingFilesFingerprint()
-		body, readErr := os.ReadFile(pricingFile)
-		if readErr != nil {
-			return fmt.Errorf("read file failed: %w", readErr)
-		}
-		data, fingerprint, err = s.buildPricingData(body)
-		if err != nil {
-			return fmt.Errorf("parse pricing data: %w", err)
-		}
-		after := s.customPricingFilesFingerprint()
-		if validateErr := s.validateCustomPricingFiles(); validateErr != nil {
-			return fmt.Errorf("validate custom pricing files: %w", validateErr)
-		}
-		if before == after && after == fingerprint {
-			break
-		}
-		if attempt == 2 {
-			return fmt.Errorf("custom pricing files changed during reload")
-		}
 	}
 
 	s.mu.Lock()
-	warnDroppedLongContextLadders(s.pricingData, data)
-	s.pricingData = data
-	s.customFilesHash = fingerprint
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing files changed, reloaded %d models from %s", len(data), pricingFile)
-	return nil
+	if raw, ok := values[SettingKeyModelPricingSyncConfig]; ok && strings.TrimSpace(raw) != "" {
+		var cfg PricingSyncConfig
+		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
+			if strings.TrimSpace(cfg.ModelsDevURL) == "" {
+				cfg.ModelsDevURL = DefaultModelsDevURL
+			}
+			if cfg.SyncIntervalHours < MinPricingSyncIntervalHours || cfg.SyncIntervalHours > MaxPricingSyncIntervalHours {
+				cfg.SyncIntervalHours = DefaultPricingSyncIntervalHours
+			}
+			s.syncConfig = cfg
+		}
+	}
+
+	if raw, ok := values[SettingKeyModelPricingSyncMeta]; ok && strings.TrimSpace(raw) != "" {
+		var meta PricingSyncMetadata
+		if err := json.Unmarshal([]byte(raw), &meta); err == nil {
+			s.syncMeta = meta
+		}
+	}
+
+	if raw, ok := values[SettingKeyModelPricingOverrides]; ok && strings.TrimSpace(raw) != "" {
+		var ov PricingOverridesState
+		if err := json.Unmarshal([]byte(raw), &ov); err == nil {
+			if ov.Default == nil {
+				ov.Default = make(map[string]ModelPricingOverride)
+			}
+			for id, item := range ov.Default {
+				if !item.IsCustom && !item.Locked {
+					item.IsCustom = true
+					ov.Default[id] = item
+				}
+			}
+			if ov.Channels == nil {
+				ov.Channels = make(map[string]map[string]ModelPricingOverride)
+			}
+			for chID, chMap := range ov.Channels {
+				for id, item := range chMap {
+					if !item.IsCustom && !item.Locked {
+						item.IsCustom = true
+						chMap[id] = item
+					}
+				}
+				ov.Channels[chID] = chMap
+			}
+			if ov.Groups == nil {
+				ov.Groups = make(map[string]map[string]ModelPricingOverride)
+			}
+			s.overrides = ov
+		}
+	}
 }
 
-// downloadPricingData 从远程下载价格数据
-func (s *PricingService) downloadPricingData() error {
-	remoteURL, err := s.validatePricingURL(s.cfg.Pricing.RemoteURL)
+func (s *PricingService) persistSettingJSON(ctx context.Context, key string, value any) error {
+	s.mu.RLock()
+	repo := s.settingRepo
+	s.mu.RUnlock()
+	if repo == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	logger.LegacyPrintf("service.pricing", "[Pricing] Downloading from %s", remoteURL)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// 获取远程哈希（用于同步锚点，不作为完整性校验）
-	var remoteHash string
-	if strings.TrimSpace(s.cfg.Pricing.HashURL) != "" {
-		remoteHash, err = s.fetchRemoteHash()
-		if err != nil {
-			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to fetch remote hash (continuing): %v", err)
-		}
+	if ctx == nil {
+		ctx = context.Background()
 	}
-
-	body, err := s.remoteClient.FetchPricingJSON(ctx, remoteURL)
-	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
-	}
-
-	// 哈希校验：不匹配时仅告警，不阻止更新
-	// 远程哈希文件可能与数据文件不同步（如维护者更新了数据但未更新哈希文件）
-	dataHash := sha256.Sum256(body)
-	dataHashStr := hex.EncodeToString(dataHash[:])
-	if remoteHash != "" && !strings.EqualFold(remoteHash, dataHashStr) {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Hash mismatch warning: remote=%s data=%s (hash file may be out of sync)",
-			remoteHash[:min(8, len(remoteHash))], dataHashStr[:8])
-	}
-
-	data, customFilesHash, err := s.buildPricingData(body)
-	if err != nil {
-		return fmt.Errorf("parse pricing data: %w", err)
-	}
-
-	// 保存到本地文件
-	pricingFile := s.getPricingFilePath()
-	if err := os.WriteFile(pricingFile, body, 0644); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save file: %v", err)
-	}
-
-	// 只有远程哈希与下载正文一致时才将其作为同步锚点。
-	// 不匹配时保留正文哈希，让下一轮同步重试，避免旧数据被误标为最新。
-	syncHash := dataHashStr
-	if strings.EqualFold(remoteHash, dataHashStr) {
-		syncHash = remoteHash
-	}
-	hashFile := s.getHashFilePath()
-	if err := os.WriteFile(hashFile, []byte(syncHash+"\n"), 0644); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save hash: %v", err)
-	}
-
-	// 更新内存数据
-	s.mu.Lock()
-	warnDroppedLongContextLadders(s.pricingData, data)
-	s.pricingData = data
-	s.lastUpdated = time.Now()
-	s.localHash = syncHash
-	s.customFilesHash = customFilesHash
-	s.mu.Unlock()
-
-	logger.LegacyPrintf("service.pricing", "[Pricing] Downloaded %d models successfully", len(data))
-	return nil
+	return repo.Set(ctx, key, string(encoded))
 }
 
-// parsePricingData 解析价格数据（处理各种格式）
-func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModelPricing, error) {
-	// 首先解析为 map[string]json.RawMessage
-	var rawData map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawData); err != nil {
-		return nil, fmt.Errorf("parse raw JSON: %w", err)
+// --- Sync & Filtered Disk Cache ---
+
+func (s *PricingService) getCatalogCachePath() string {
+	if s.cfg == nil || strings.TrimSpace(s.cfg.Pricing.DataDir) == "" {
+		return ""
 	}
-	rawData, priceOverrides := s.applyPricingOverrides(rawData)
+	return filepath.Join(s.cfg.Pricing.DataDir, modelsDevCatalogFileName)
+}
 
-	result := make(map[string]*LiteLLMModelPricing)
-	skipped := 0
-	var orphanCacheTiers, lopsidedLadders []string
+func (s *PricingService) loadCatalogFromDisk(filePath string) error {
+	body, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	_, err = s.applyModelsDevCatalogBytes(body, false)
+	return err
+}
 
-	for modelName, rawEntry := range rawData {
-		// 跳过 sample_spec 等文档条目
-		if modelName == "sample_spec" {
+// LoadModelsDevJSON loads models.dev JSON bytes into memory (filtered to system-supported platforms/models).
+func (s *PricingService) LoadModelsDevJSON(body []byte) error {
+	_, err := s.applyModelsDevCatalogBytes(body, false)
+	return err
+}
+
+func (s *PricingService) applyModelsDevCatalogBytes(body []byte, updateSyncMeta bool) ([]byte, error) {
+	models, providerModels, platformSummaries, filteredRaw, channelCount, rawCount, err := parseSupportedModelsDevCatalog(body)
+	if err != nil {
+		return nil, err
+	}
+
+	filteredBytes, err := json.Marshal(filteredRaw)
+	if err != nil {
+		filteredBytes = body
+	}
+
+	sum := sha256.Sum256(filteredBytes)
+	hashStr := hex.EncodeToString(sum[:])
+	now := time.Now()
+
+	s.mu.Lock()
+	s.models = models
+	s.providerModels = providerModels
+	s.platformSummaries = platformSummaries
+	s.localHash = hashStr
+	s.lastUpdated = now
+	s.syncMeta.CacheHash = hashStr[:min(16, len(hashStr))]
+	s.syncMeta.ChannelCount = channelCount
+	s.syncMeta.ModelCount = len(models)
+	s.syncMeta.RawEntryCount = rawCount
+	if updateSyncMeta {
+		t := now
+		s.syncMeta.LastSyncAt = &t
+		s.syncMeta.LastSyncStatus = PricingSyncStatusSuccess
+		s.syncMeta.LastSyncError = ""
+	}
+	s.rebuildEffectiveDefaultLocked()
+	s.mu.Unlock()
+	return filteredBytes, nil
+}
+
+// SyncNow fetches models.dev/api.json, filters to system-supported models & channels,
+// skips locked channel prices, updates unlocked entries, and persists the slim filtered cache.
+func (s *PricingService) SyncNow(ctx context.Context) (*PricingSyncStatus, error) {
+	return s.SyncNowWithMode(ctx, PricingSyncOverwriteSkipLocked)
+}
+
+// SyncNowWithMode performs a models.dev sync with explicit overwrite semantics:
+//   - "skip_locked" (default / auto-sync): keeps all locked channel prices untouched; updates unlocked entries.
+//   - "overwrite_all" (manual confirmed overwrite): overwrites all synced channel prices (including locked ones),
+//     while preserving custom-only models and system group overrides.
+func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode string) (*PricingSyncStatus, error) {
+	if s == nil {
+		return nil, errors.New("pricing service is nil")
+	}
+	if s.remoteClient == nil {
+		return nil, errors.New("pricing remote client is not configured")
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(overwriteMode))
+	if mode == "" {
+		mode = PricingSyncOverwriteSkipLocked
+	}
+	if mode != PricingSyncOverwriteSkipLocked && mode != PricingSyncOverwriteAll {
+		return nil, fmt.Errorf("invalid overwrite_mode %q (expected %q or %q)", overwriteMode, PricingSyncOverwriteSkipLocked, PricingSyncOverwriteAll)
+	}
+
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	s.mu.RLock()
+	rawURL := strings.TrimSpace(s.syncConfig.ModelsDevURL)
+	s.mu.RUnlock()
+	if rawURL == "" {
+		rawURL = DefaultModelsDevURL
+	}
+
+	validatedURL, err := s.validatePricingURL(rawURL)
+	if err != nil {
+		s.recordSyncError(ctx, err)
+		return s.GetSyncStatus(), err
+	}
+
+	logger.LegacyPrintf("service.pricing", "[Pricing] Syncing supported models from %s (mode=%s)", validatedURL, mode)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	body, err := s.remoteClient.FetchPricingJSON(ctx, validatedURL)
+	if err != nil {
+		err = fmt.Errorf("fetch models.dev catalog: %w", err)
+		s.recordSyncError(ctx, err)
+		return s.GetSyncStatus(), err
+	}
+
+	filteredBytes, err := s.applyModelsDevCatalogBytes(body, true)
+	if err != nil {
+		err = fmt.Errorf("parse models.dev catalog: %w", err)
+		s.recordSyncError(ctx, err)
+		return s.GetSyncStatus(), err
+	}
+
+	// Reconcile Default & Channel overrides against the freshly synced catalog according to overwrite_mode.
+	// System Group overrides (s.overrides.Groups) and custom-only models are always preserved.
+	var overridesChanged bool
+	var overridesCopy PricingOverridesState
+	s.mu.Lock()
+	skippedLocked := 0
+	overwrittenCount := 0
+
+	for modelID, ov := range s.overrides.Default {
+		if s.models[modelID] == nil {
+			// Custom-only model not in models.dev: always keep.
 			continue
 		}
-
-		// 尝试解析每个条目
-		var entry LiteLLMRawEntry
-		if err := json.Unmarshal(rawEntry, &entry); err != nil {
-			skipped++
-			continue
-		}
-
-		// 只保留有有效价格的条目
-		if entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil && entry.OutputCostPerImage == nil && entry.OutputCostPerImageToken == nil && entry.InputCostPerImageToken == nil {
-			continue
-		}
-
-		pricing := &LiteLLMModelPricing{
-			priceOverrides:        priceOverrides[modelName],
-			LiteLLMProvider:       entry.LiteLLMProvider,
-			Mode:                  entry.Mode,
-			SupportsPromptCaching: entry.SupportsPromptCaching,
-			SupportsServiceTier:   entry.SupportsServiceTier,
-			TokenPricingAbsent:    entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil,
-		}
-
-		if entry.InputCostPerToken != nil {
-			pricing.InputCostPerToken = *entry.InputCostPerToken
-		}
-		if entry.InputCostPerTokenPriority != nil {
-			pricing.InputCostPerTokenPriority = *entry.InputCostPerTokenPriority
-		}
-		if entry.OutputCostPerToken != nil {
-			pricing.OutputCostPerToken = *entry.OutputCostPerToken
-		}
-		if entry.OutputCostPerTokenPriority != nil {
-			pricing.OutputCostPerTokenPriority = *entry.OutputCostPerTokenPriority
-		}
-		if entry.CacheCreationInputTokenCost != nil {
-			pricing.CacheCreationInputTokenCost = *entry.CacheCreationInputTokenCost
-			pricing.CacheCreationInputTokenCostExplicit = true
-		}
-		if entry.CacheCreationInputTokenCostPriority != nil {
-			pricing.CacheCreationInputTokenCostPriority = *entry.CacheCreationInputTokenCostPriority
-		}
-		if entry.CacheCreationInputTokenCostAbove1hr != nil {
-			pricing.CacheCreationInputTokenCostAbove1hr = *entry.CacheCreationInputTokenCostAbove1hr
-		}
-		if entry.CacheReadInputTokenCost != nil {
-			pricing.CacheReadInputTokenCost = *entry.CacheReadInputTokenCost
-		}
-		if entry.CacheReadInputTokenCostPriority != nil {
-			pricing.CacheReadInputTokenCostPriority = *entry.CacheReadInputTokenCostPriority
-		}
-		if entry.LongContextInputTokenThreshold != nil {
-			pricing.LongContextInputTokenThreshold = *entry.LongContextInputTokenThreshold
-		}
-		if entry.LongContextInputCostMultiplier != nil {
-			pricing.LongContextInputCostMultiplier = *entry.LongContextInputCostMultiplier
-		}
-		if entry.LongContextOutputCostMultiplier != nil {
-			pricing.LongContextOutputCostMultiplier = *entry.LongContextOutputCostMultiplier
-		}
-		if entry.OutputCostPerImage != nil {
-			pricing.OutputCostPerImage = *entry.OutputCostPerImage
-		}
-		if entry.OutputCostPerImageToken != nil {
-			pricing.OutputCostPerImageToken = *entry.OutputCostPerImageToken
-		}
-		if entry.InputCostPerImageToken != nil {
-			pricing.InputCostPerImageToken = *entry.InputCostPerImageToken
-		}
-		if entry.CacheReadInputImageTokenCost != nil {
-			pricing.CacheReadInputImageTokenCost = *entry.CacheReadInputImageTokenCost
-		}
-		if entry.CacheStorageCostPerTokenPerHour != nil {
-			pricing.CacheStorageCostPerTokenPerHour = *entry.CacheStorageCostPerTokenPerHour
-		}
-
-		hasExplicitLongContext := entry.LongContextInputTokenThreshold != nil ||
-			entry.LongContextInputCostMultiplier != nil ||
-			entry.LongContextOutputCostMultiplier != nil
-		if !hasExplicitLongContext {
-			deriveLongContextFromAboveTierFields(rawEntry, pricing)
-			if isLopsidedLongContextLadder(pricing) {
-				lopsidedLadders = append(lopsidedLadders, fmt.Sprintf("%s(input x%.2f, output x%.2f)", modelName,
-					pricing.LongContextInputCostMultiplier, pricing.LongContextOutputCostMultiplier))
+		if mode == PricingSyncOverwriteAll {
+			delete(s.overrides.Default, modelID)
+			overwrittenCount++
+			overridesChanged = true
+		} else {
+			if ov.Locked {
+				skippedLocked++
+			} else {
+				delete(s.overrides.Default, modelID)
+				overwrittenCount++
+				overridesChanged = true
 			}
 		}
-		if orphans := orphanCacheTierFields(rawEntry); len(orphans) > 0 {
-			orphanCacheTiers = append(orphanCacheTiers, modelName+"("+strings.Join(orphans, ",")+")")
-		}
-
-		result[modelName] = pricing
 	}
 
-	if skipped > 0 {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Skipped %d invalid entries", skipped)
-	}
-	warnOrphanCacheTierFields(orphanCacheTiers)
-	warnLopsidedLongContextLadders(lopsidedLadders)
-
-	if len(result) == 0 {
-		return nil, fmt.Errorf("no valid pricing entries found")
-	}
-
-	return result, nil
-}
-
-// deriveLongContextFromAboveTierFields 把 LiteLLM 目录的 *_above_XXXk_tokens 绝对价字段
-// 折算成 long_context_* 阈值+倍率（sub2api 计费机制的内部表达）：阈值取自字段名，
-// 倍率 = above 价 ÷ 基础价。条目显式携带任一 long_context_* 字段（含显式 0）时由
-// 调用方跳过折算，以显式配置为准——显式写 threshold=0 或 multiplier=1 均可关闭该
-// 模型的阶梯。多个阈值并存时取最小阈值。
-// cache_read/cache_creation 的 above 档在计费中统一跟随输入倍率，不单独折算：
-// 目录条目的 cache above 档须恰为基础价 × 输入倍率；缺基础价的 cache above 字段
-// 无法参与计费，由 orphanCacheTierFields 哨兵告警。
-func deriveLongContextFromAboveTierFields(rawEntry json.RawMessage, pricing *LiteLLMModelPricing) {
-	if pricing == nil ||
-		pricing.LongContextInputTokenThreshold > 0 ||
-		pricing.LongContextInputCostMultiplier > 0 ||
-		pricing.LongContextOutputCostMultiplier > 0 {
-		return
-	}
-	if !bytes.Contains(rawEntry, []byte("_above_")) {
-		return
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(rawEntry, &fields); err != nil {
-		return
-	}
-	type tierPrices struct{ input, output float64 }
-	tiers := make(map[int]*tierPrices)
-	for key, value := range fields {
-		m := aboveTierPricePattern.FindStringSubmatch(key)
-		if m == nil {
-			continue
+	for chID, chModels := range s.overrides.Channels {
+		for modelID, ov := range chModels {
+			entry := s.models[modelID]
+			if entry == nil || entry.channelByID[chID] == nil {
+				continue
+			}
+			if mode == PricingSyncOverwriteAll {
+				delete(chModels, modelID)
+				overwrittenCount++
+				overridesChanged = true
+			} else {
+				if ov.Locked {
+					skippedLocked++
+				} else {
+					delete(chModels, modelID)
+					overwrittenCount++
+					overridesChanged = true
+				}
+			}
 		}
-		price, ok := value.(float64)
-		if !ok || price <= 0 {
-			continue
-		}
-		thousands, err := strconv.Atoi(m[2])
-		if err != nil || thousands <= 0 {
-			continue
-		}
-		threshold := thousands * 1000
-		tp := tiers[threshold]
-		if tp == nil {
-			tp = &tierPrices{}
-			tiers[threshold] = tp
-		}
-		if m[1] == "input" {
-			tp.input = price
-		} else {
-			tp.output = price
+		if len(chModels) == 0 {
+			delete(s.overrides.Channels, chID)
 		}
 	}
-	if len(tiers) == 0 {
-		return
-	}
-	threshold := 0
-	for t := range tiers {
-		if threshold == 0 || t < threshold {
-			threshold = t
-		}
-	}
-	tp := tiers[threshold]
-	inputMultiplier, outputMultiplier := 1.0, 1.0
-	if tp.input > 0 && pricing.InputCostPerToken > 0 {
-		inputMultiplier = tp.input / pricing.InputCostPerToken
-	}
-	if tp.output > 0 && pricing.OutputCostPerToken > 0 {
-		outputMultiplier = tp.output / pricing.OutputCostPerToken
-	}
-	// above 价不高于基础价时视为无附加费，不生成阶梯。
-	if inputMultiplier <= 1 && outputMultiplier <= 1 {
-		return
-	}
-	pricing.LongContextInputTokenThreshold = threshold
-	pricing.LongContextInputCostMultiplier = inputMultiplier
-	pricing.LongContextOutputCostMultiplier = outputMultiplier
-}
 
-// isLopsidedLongContextLadder 判断折算出的阶梯是否只有一侧带附加费。官方阶梯（OpenAI、
-// Google、Anthropic、xAI）都同时抬高 input 与 output；单侧附加费意味着条目的基础价与
-// above 档来自不同价格版本（如基础价被手工 pin、above 档随上游更新），折算出的倍率失真。
-func isLopsidedLongContextLadder(pricing *LiteLLMModelPricing) bool {
-	if pricing == nil || pricing.LongContextInputTokenThreshold <= 0 {
-		return false
+	s.syncMeta.LastSkippedLocked = skippedLocked
+	s.syncMeta.LastOverwrittenCount = overwrittenCount
+	if overridesChanged {
+		s.rebuildEffectiveDefaultLocked()
+		overridesCopy = clonePricingOverridesState(s.overrides)
 	}
-	return (pricing.LongContextInputCostMultiplier > 1) != (pricing.LongContextOutputCostMultiplier > 1)
-}
-
-// warnLopsidedLongContextLadders 对单侧附加费的折算阶梯打 WARN：应成组修正该条目的
-// 基础价与 above 档（目录或 pricing.override_file）。
-func warnLopsidedLongContextLadders(entries []string) {
-	if len(entries) == 0 {
-		return
-	}
-	sort.Strings(entries)
-	total := len(entries)
-	if total > 20 {
-		entries = append(entries[:20], "...")
-	}
-	logger.LegacyPrintf("service.pricing", "[Pricing] Warning: %d model(s) derive a one-sided long-context ladder (surcharge on only input or only output); base prices and above-tier prices likely come from different price versions: %s", total, strings.Join(entries, ", "))
-}
-
-// orphanCacheTierFields 返回条目中没有对应基础价的 cache 侧 above 档字段名。
-// cache 侧 above 档不参与计费取值，计费按"基础价 × 输入倍率"；基础价缺失或为 0 时，
-// 该缓存分项在整个阶梯上都按 0 计。计费对变体有回落：服务档变体（_priority/_flex）
-// 缺自身基础价时用标准基础价，1h 缓存写入缺 above_1hr 价时全部按 5m 价——因此沿
-// 回落链任一基础价存在即不算孤儿。
-func orphanCacheTierFields(rawEntry json.RawMessage) []string {
-	if !bytes.Contains(rawEntry, []byte("_above_")) {
-		return nil
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(rawEntry, &fields); err != nil {
-		return nil
-	}
-	positive := func(key string) bool {
-		price, ok := fields[key].(float64)
-		return ok && price > 0
-	}
-	var orphans []string
-	for key := range fields {
-		m := cacheTierPricePattern.FindStringSubmatch(key)
-		if m == nil || !positive(key) {
-			continue
-		}
-		stem, hourly, tier := m[1], m[2], m[3]
-		if positive(stem+hourly+tier) || positive(stem+hourly) || positive(stem+tier) || positive(stem) {
-			continue
-		}
-		orphans = append(orphans, key)
-	}
-	sort.Strings(orphans)
-	return orphans
-}
-
-// warnOrphanCacheTierFields 对带 cache 侧 above 档却没有基础价的条目打 WARN：
-// 该缓存分项按 0 计费，目录或 pricing.override_file 补上基础价即可消除。
-func warnOrphanCacheTierFields(entries []string) {
-	if len(entries) == 0 {
-		return
-	}
-	sort.Strings(entries)
-	total := len(entries)
-	if total > 20 {
-		entries = append(entries[:20], "...")
-	}
-	logger.LegacyPrintf("service.pricing", "[Pricing] Warning: %d model(s) carry cache above-tier prices without a base cache price; that cache item bills at $0 until the catalog/override supplies the base: %s", total, strings.Join(entries, ", "))
-}
-
-// applyPricingOverrides 把 override 文件的条目逐字段修补进原始目录数据。目录与回退
-// 文件的解析都经过 parsePricingData，因此 override 是最高优先级的数据源。这里只修补
-// 已存在的条目：目录/回退里都没有的模型由 mergeOverrideOnlyModels 在两层数据合并后
-// 统一并入——若在此处抢先建条目，纯 override 条目会挡住回退文件中同名完整条目的合并。
-func (s *PricingService) applyPricingOverrides(rawData map[string]json.RawMessage) (map[string]json.RawMessage, map[string]tokenPriceOverrides) {
-	overrides := s.loadPricingOverrideEntries()
-	if len(overrides) == 0 {
-		return rawData, nil
-	}
-	priceOverrides := make(map[string]tokenPriceOverrides, len(overrides))
-	for name, patch := range overrides {
-		base, ok := rawData[name]
-		if !ok {
-			continue
-		}
-		merged, valid := mergePricingOverrideEntry(base, patch)
-		if !valid {
-			logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override entry %q skipped: not a JSON object", name)
-			continue
-		}
-		rawData[name] = merged
-		priceOverrides[name] = tokenPriceOverridesFromPatch(patch)
-	}
-	return rawData, priceOverrides
-}
-
-func tokenPriceOverridesFromPatch(patch json.RawMessage) tokenPriceOverrides {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(patch, &fields) != nil {
-		return tokenPriceOverrides{}
-	}
-	explicitRate := func(field string) bool {
-		var rate *float64
-		return json.Unmarshal(fields[field], &rate) == nil && rate != nil && *rate >= 0
-	}
-	return tokenPriceOverrides{
-		input:     explicitRate("input_cost_per_token"),
-		output:    explicitRate("output_cost_per_token"),
-		cacheRead: explicitRate("cache_read_input_token_cost"),
-	}
-}
-
-// loadPricingOverrideEntries 读取 override 文件的原始条目。未配置返回 nil；
-// 读取或解析失败打日志并跳过，不影响目录加载。
-func (s *PricingService) loadPricingOverrideEntries() map[string]json.RawMessage {
-	if s == nil || s.cfg == nil {
-		return nil
-	}
-	path := strings.TrimSpace(s.cfg.Pricing.OverrideFile)
-	if path == "" {
-		return nil
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override merge skipped: %v", err)
-		return nil
-	}
-	var entries map[string]json.RawMessage
-	if err := json.Unmarshal(body, &entries); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override merge skipped: %v", err)
-		return nil
-	}
-	return entries
-}
-
-// mergePricingOverrideEntry 在 JSON 字段层浅合并：patch 字段覆盖 base 同名字段，
-// 值为 null 的 patch 字段从结果中删除，base 为空时结果即 patch 本身。
-// patch 不是 JSON 对象时返回 ok=false。
-func mergePricingOverrideEntry(base, patch json.RawMessage) (json.RawMessage, bool) {
-	var patchFields map[string]any
-	if err := json.Unmarshal(patch, &patchFields); err != nil || patchFields == nil {
-		return nil, false
-	}
-	merged := make(map[string]any, len(patchFields))
-	if len(base) > 0 {
-		// base 非对象时忽略，仅以 patch 为准。
-		if err := json.Unmarshal(base, &merged); err != nil {
-			merged = make(map[string]any, len(patchFields))
-		}
-	}
-	for k, v := range patchFields {
-		if v == nil {
-			delete(merged, k)
-			continue
-		}
-		merged[k] = v
-	}
-	out, err := json.Marshal(merged)
-	if err != nil {
-		return nil, false
-	}
-	return out, true
-}
-
-// mergeOverrideOnlyModels 把 override 中目录/回退两层都不存在的模型作为独立条目并入
-// （条目须自带价格字段才能通过有效性过滤），并对最终仍未生效的条目打 WARN：
-// 模型名拼错、或纯补丁条目落在不存在的模型上时会被静默丢弃，让"已改价/已关阶梯"
-// 的运营预期与实际计费脱节，这里是唯一的哨兵。
-func (s *PricingService) mergeOverrideOnlyModels(data map[string]*LiteLLMModelPricing) map[string]*LiteLLMModelPricing {
-	overrides := s.loadPricingOverrideEntries()
-	if len(overrides) == 0 {
-		return data
-	}
-	if data == nil {
-		data = make(map[string]*LiteLLMModelPricing)
-	}
-	leftover := make(map[string]json.RawMessage)
-	for name, patch := range overrides {
-		if _, ok := data[name]; !ok {
-			leftover[name] = patch
-		}
-	}
-	if len(leftover) == 0 {
-		return data
-	}
-	// 复用主解析路径（含 above_XXXk 折算与有效性过滤）；applyPricingOverrides
-	// 对已存在条目做的自我修补是幂等的，不会二次改值。
-	if body, err := json.Marshal(leftover); err == nil {
-		if parsed, err := s.parsePricingData(body); err == nil {
-			maps.Copy(data, parsed)
-		}
-	}
-	var missing []string
-	for name := range leftover {
-		if _, ok := data[name]; !ok {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) == 0 {
-		return data
-	}
-	sort.Strings(missing)
-	logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override had no effect for %d model(s): %s (unknown model name, or patch-only entry without price fields)", len(missing), strings.Join(missing, ", "))
-	return data
-}
-
-// buildPricingData 解析目录正文并依次叠加 fallback、override 两层，返回合并结果与
-// 叠加层文件指纹。指纹在合并读取之前采样：并发改文件只会让存下的指纹落后于实际
-// 合并的数据、不会领先，下一轮定时比对因此会再次重建。
-func (s *PricingService) buildPricingData(body []byte) (map[string]*LiteLLMModelPricing, string, error) {
-	fingerprint := s.customPricingFilesFingerprint()
-	data, err := s.parsePricingData(body)
-	if err != nil {
-		return nil, "", err
-	}
-	data = s.mergeFallbackPricingData(data)
-	data = s.mergeOverrideOnlyModels(data)
-	return data, fingerprint, nil
-}
-
-// loadPricingData 从本地文件加载价格数据
-func (s *PricingService) loadPricingData(filePath string) error {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("read file failed: %w", err)
-	}
-
-	pricingData, customFilesHash, err := s.buildPricingData(data)
-	if err != nil {
-		return fmt.Errorf("parse pricing data: %w", err)
-	}
-
-	// 计算哈希
-	hash := sha256.Sum256(data)
-	hashStr := hex.EncodeToString(hash[:])
-
-	s.mu.Lock()
-	warnDroppedLongContextLadders(s.pricingData, pricingData)
-	s.pricingData = pricingData
-	s.localHash = hashStr
-	s.customFilesHash = customFilesHash
-
-	info, _ := os.Stat(filePath)
-	if info != nil {
-		s.lastUpdated = info.ModTime()
-	} else {
-		s.lastUpdated = time.Now()
-	}
+	metaCopy := s.syncMeta
 	s.mu.Unlock()
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Loaded %d models from %s", len(pricingData), filePath)
-	return nil
-}
-
-func (s *PricingService) mergeFallbackPricingData(data map[string]*LiteLLMModelPricing) map[string]*LiteLLMModelPricing {
-	if data == nil {
-		data = make(map[string]*LiteLLMModelPricing)
-	}
-	if s == nil || s.cfg == nil || strings.TrimSpace(s.cfg.Pricing.FallbackFile) == "" {
-		return data
-	}
-	fallbackBody, err := os.ReadFile(s.cfg.Pricing.FallbackFile)
-	if err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Fallback merge skipped: %v", err)
-		return data
-	}
-	fallbackData, err := s.parsePricingData(fallbackBody)
-	if err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Fallback merge parse skipped: %v", err)
-		return data
-	}
-	merged := 0
-	for modelName, pricing := range fallbackData {
-		if _, ok := data[modelName]; ok {
-			continue
-		}
-		data[modelName] = pricing
-		merged++
-	}
-	if merged > 0 {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Merged %d fallback-only models", merged)
-	}
-	return data
-}
-
-// warnDroppedLongContextLadders 对比新旧目录数据：原本带长上下文阶梯的条目在新数据里
-// 丢失阈值时打 WARN。阶梯已完全数据驱动（无代码兜底），数据源一次误提交就会把阶梯
-// 静默变成基础价少收（07-14~08-21 漏收事故的形态），这里是唯一的哨兵。
-// 调用方需持有 s.mu 写锁。
-func warnDroppedLongContextLadders(old, next map[string]*LiteLLMModelPricing) {
-	if len(old) == 0 {
-		return
-	}
-	var dropped []string
-	for name, prev := range old {
-		if prev == nil || prev.LongContextInputTokenThreshold <= 0 {
-			continue
-		}
-		if cur, ok := next[name]; ok && (cur == nil || cur.LongContextInputTokenThreshold <= 0) {
-			dropped = append(dropped, name)
+	if overridesChanged {
+		if err := s.persistSettingJSON(ctx, SettingKeyModelPricingOverrides, overridesCopy); err != nil {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to persist reconciled overrides: %v", err)
 		}
 	}
-	if len(dropped) == 0 {
-		return
+
+	// Atomically write slim filtered cache to disk
+	if cachePath := s.getCatalogCachePath(); cachePath != "" {
+		if mkErr := os.MkdirAll(filepath.Dir(cachePath), 0755); mkErr == nil {
+			tmpPath := cachePath + ".tmp"
+			if writeErr := os.WriteFile(tmpPath, filteredBytes, 0644); writeErr == nil {
+				if renameErr := os.Rename(tmpPath, cachePath); renameErr != nil {
+					_ = os.WriteFile(cachePath, filteredBytes, 0644)
+					_ = os.Remove(tmpPath)
+				}
+			} else {
+				logger.LegacyPrintf("service.pricing", "[Pricing] Failed to write models.dev cache file: %v", writeErr)
+			}
+		}
 	}
-	sort.Strings(dropped)
-	total := len(dropped)
-	if total > 20 {
-		dropped = append(dropped[:20], "...")
+
+	if err := s.persistSettingJSON(ctx, SettingKeyModelPricingSyncMeta, metaCopy); err != nil {
+		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to persist sync metadata: %v", err)
 	}
-	logger.LegacyPrintf("service.pricing", "[Pricing] Long-context ladder dropped for %d model(s) after reload: %s (verify catalog/override data if unintended)", total, strings.Join(dropped, ", "))
+
+	logger.LegacyPrintf("service.pricing", "[Pricing] Synced supported models.dev pricing (%d channels, %d models, %d entries, skipped_locked=%d, overwritten=%d)",
+		metaCopy.ChannelCount, metaCopy.ModelCount, metaCopy.RawEntryCount, skippedLocked, overwrittenCount)
+	return s.GetSyncStatus(), nil
 }
 
-// useFallbackPricing 使用回退价格文件
-func (s *PricingService) useFallbackPricing() error {
-	fallbackFile := s.cfg.Pricing.FallbackFile
-
-	if _, err := os.Stat(fallbackFile); os.IsNotExist(err) {
-		return fmt.Errorf("fallback file not found: %s", fallbackFile)
-	}
-
-	logger.LegacyPrintf("service.pricing", "[Pricing] Using fallback file: %s", fallbackFile)
-
-	// 复制到数据目录
-	data, err := os.ReadFile(fallbackFile)
-	if err != nil {
-		return fmt.Errorf("read fallback failed: %w", err)
-	}
-
-	pricingFile := s.getPricingFilePath()
-	if err := os.WriteFile(pricingFile, data, 0644); err != nil { //nolint:gosec // G703: 路径为配置的数据目录 + 硬编码文件名，非请求输入
-		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to copy fallback: %v", err)
-	}
-
-	return s.loadPricingData(fallbackFile)
+func (s *PricingService) recordSyncError(ctx context.Context, syncErr error) {
+	now := time.Now()
+	s.mu.Lock()
+	s.syncMeta.LastSyncAt = &now
+	s.syncMeta.LastSyncStatus = PricingSyncStatusFailed
+	s.syncMeta.LastSyncError = syncErr.Error()
+	metaCopy := s.syncMeta
+	s.mu.Unlock()
+	_ = s.persistSettingJSON(ctx, SettingKeyModelPricingSyncMeta, metaCopy)
 }
 
-// fetchRemoteHash 从远程获取哈希值
-func (s *PricingService) fetchRemoteHash() (string, error) {
-	hashURL, err := s.validatePricingURL(s.cfg.Pricing.HashURL)
-	if err != nil {
-		return "", err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+// ForceUpdate 强制立即同步 models.dev 数据
+func (s *PricingService) ForceUpdate() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	_, err := s.SyncNow(ctx)
+	return err
+}
 
-	hash, err := s.remoteClient.FetchHashText(ctx, hashURL)
-	if err != nil {
-		return "", err
+// UpdateSyncConfig updates sync configuration, persists it, and reschedules background sync.
+func (s *PricingService) UpdateSyncConfig(ctx context.Context, next PricingSyncConfig) (*PricingSyncStatus, error) {
+	next.ModelsDevURL = strings.TrimSpace(next.ModelsDevURL)
+	if next.ModelsDevURL == "" {
+		next.ModelsDevURL = DefaultModelsDevURL
 	}
-	return strings.TrimSpace(hash), nil
+	if _, err := s.validatePricingURL(next.ModelsDevURL); err != nil {
+		return nil, err
+	}
+	if next.SyncIntervalHours < MinPricingSyncIntervalHours || next.SyncIntervalHours > MaxPricingSyncIntervalHours {
+		return nil, fmt.Errorf("sync_interval_hours must be between %d and %d", MinPricingSyncIntervalHours, MaxPricingSyncIntervalHours)
+	}
+
+	s.mu.Lock()
+	s.syncConfig = next
+	s.mu.Unlock()
+
+	if err := s.persistSettingJSON(ctx, SettingKeyModelPricingSyncConfig, next); err != nil {
+		return nil, fmt.Errorf("persist sync config: %w", err)
+	}
+	s.signalSchedulerReset()
+	return s.GetSyncStatus(), nil
+}
+
+// GetSyncStatus returns the current sync config, metadata, and override/lock summary.
+func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	groupCounts := make(map[string]int, len(s.overrides.Groups))
+	for gid, models := range s.overrides.Groups {
+		if len(models) > 0 {
+			groupCounts[gid] = len(models)
+		}
+	}
+
+	defaultOverrideCount := 0
+	channelOverrideCount := 0
+	lockedChannelCount := 0
+	unlockedCustomCount := 0
+
+	for modelID, ov := range s.overrides.Default {
+		isCustom := ov.IsCustom || !ov.Locked
+		if isCustom {
+			defaultOverrideCount++
+		}
+		if s.models[modelID] != nil {
+			if ov.Locked {
+				lockedChannelCount++
+			} else if isCustom {
+				unlockedCustomCount++
+			}
+		}
+	}
+	for chID, chModels := range s.overrides.Channels {
+		for modelID, ov := range chModels {
+			isCustom := ov.IsCustom || !ov.Locked
+			if isCustom {
+				channelOverrideCount++
+			}
+			if ov.Locked {
+				lockedChannelCount++
+			} else if isCustom {
+				if entry := s.models[modelID]; entry != nil && entry.channelByID[chID] != nil {
+					unlockedCustomCount++
+				}
+			}
+		}
+	}
+
+	return &PricingSyncStatus{
+		Config:               s.syncConfig,
+		Meta:                 s.syncMeta,
+		DefaultOverrideCount: defaultOverrideCount,
+		ChannelOverrideCount: channelOverrideCount,
+		LockedChannelCount:   lockedChannelCount,
+		UnlockedCustomCount:  unlockedCustomCount,
+		GroupOverrideCounts:  groupCounts,
+		CacheLoaded:          len(s.models) > 0,
+	}
+}
+
+// GetStatus 获取服务状态
+func (s *PricingService) GetStatus() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return map[string]any{
+		"source":            "models.dev",
+		"model_count":       len(s.effectiveDefaultData),
+		"channel_count":     s.syncMeta.ChannelCount,
+		"last_updated":      s.lastUpdated,
+		"local_hash":        s.localHash[:min(8, len(s.localHash))],
+		"auto_sync_enabled": s.syncConfig.AutoSyncEnabled,
+	}
 }
 
 func (s *PricingService) validatePricingURL(raw string) (string, error) {
-	if s.cfg != nil && !s.cfg.Security.URLAllowlist.Enabled {
-		normalized, err := urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
+	if s.cfg == nil || !s.cfg.Security.URLAllowlist.Enabled {
+		allowHTTP := s.cfg == nil || s.cfg.Security.URLAllowlist.AllowInsecureHTTP
+		normalized, err := urlvalidator.ValidateURLFormat(raw, allowHTTP)
 		if err != nil {
 			return "", fmt.Errorf("invalid pricing url: %w", err)
 		}
@@ -1284,82 +1184,1280 @@ func (s *PricingService) validatePricingURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-// GetModelPricing 获取模型价格（带模糊匹配）
-func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// --- models.dev parsing & system-supported filtering ---
 
-	if modelName == "" {
+// NormalizeOriginalModelID extracts the canonical original model ID so the same model
+// across different account-type channels (e.g., "anthropic/claude-opus-5",
+// "global.anthropic.claude-opus-5-v1:0", "claude-opus-5@default") aligns cleanly.
+func NormalizeOriginalModelID(rawModelID string) string {
+	id := strings.TrimSpace(rawModelID)
+	if id == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(id, "/"); idx != -1 {
+		id = id[idx+1:]
+	}
+	id = strings.TrimPrefix(id, "~")
+	id = strings.TrimSpace(strings.ToLower(id))
+
+	if strings.HasSuffix(id, "[1m]") {
+		id = strings.TrimSpace(strings.TrimSuffix(id, "[1m]"))
+	}
+
+	id = bedrockRegionPrefixRe.ReplaceAllString(id, "")
+	id = bedrockVendorPrefixRe.ReplaceAllString(id, "")
+	id = bedrockVersionSuffixRe.ReplaceAllString(id, "")
+
+	id = strings.TrimSuffix(id, "@default")
+	id = vertexDateSuffixRe.ReplaceAllString(id, "-$1")
+	id = strings.ReplaceAll(id, "@", "-")
+
+	if idx := strings.Index(id, ":"); idx != -1 {
+		id = id[:idx]
+	}
+
+	return strings.TrimSpace(id)
+}
+
+func inferSystemPlatformForModel(origID, fallbackPlatform string) string {
+	switch {
+	case strings.HasPrefix(origID, "claude-"):
+		return PlatformAnthropic
+	case strings.HasPrefix(origID, "gpt-"),
+		strings.HasPrefix(origID, "o1"),
+		strings.HasPrefix(origID, "o3"),
+		strings.HasPrefix(origID, "o4"),
+		strings.HasPrefix(origID, "chatgpt-"),
+		strings.HasPrefix(origID, "codex-"),
+		strings.HasPrefix(origID, "text-embedding-"),
+		strings.HasPrefix(origID, "dall-e"),
+		strings.HasPrefix(origID, "whisper"),
+		strings.HasPrefix(origID, "tts-"):
+		return PlatformOpenAI
+	case strings.HasPrefix(origID, "gemini-"),
+		strings.HasPrefix(origID, "gemma-"),
+		strings.HasPrefix(origID, "imagen-"),
+		strings.HasPrefix(origID, "veo-"),
+		strings.HasPrefix(origID, "deep-research-"):
+		return PlatformGemini
+	case strings.HasPrefix(origID, "grok-"),
+		strings.HasPrefix(origID, "composer-"):
+		return PlatformGrok
+	case strings.HasPrefix(origID, "deepseek-"):
+		return PlatformDeepseek
+	case strings.HasPrefix(origID, "glm-"):
+		return PlatformZhipu
+	case strings.HasPrefix(origID, "kimi-"),
+		strings.HasPrefix(origID, "moonshot-"):
+		return PlatformKimi
+	case strings.HasPrefix(origID, "minimax-"):
+		return PlatformMiniMax
+	case strings.HasPrefix(origID, "jev-"):
+		return PlatformTypeSafe
+	default:
+		if fallbackPlatform != "" {
+			return fallbackPlatform
+		}
+		return PlatformOpenAI
+	}
+}
+
+func defaultProviderForSystemPlatform(platform string) string {
+	if spec, ok := domain.LookupPlatform(platform); ok && spec.ModelsDevProvider != "" {
+		return spec.ModelsDevProvider
+	}
+	return ""
+}
+
+func scoreChannelEntry(spec supportedModelsDevProviderSpec, origID, rawModelID string, raw modelsDevRawModel) int {
+	score := 0
+	primaryPlatform := inferSystemPlatformForModel(origID, spec.Platform)
+	if spec.Platform == primaryPlatform && spec.IsDefault && !spec.IsAggregator {
+		score += 2000
+	} else if spec.Platform == primaryPlatform && !spec.IsAggregator {
+		score += 1000
+	} else if spec.IsDefault {
+		score += 400
+	}
+	// Prefer exact non-regional canonical ID within the same provider (e.g. global.anthropic.* or bare id)
+	lowerRaw := strings.ToLower(strings.TrimSpace(rawModelID))
+	if lowerRaw == origID {
+		score += 100
+	} else if strings.HasPrefix(lowerRaw, "global.") {
+		score += 60
+	} else if strings.HasPrefix(lowerRaw, "anthropic.") || strings.HasSuffix(lowerRaw, "@default") {
+		score += 40
+	}
+	if raw.Cost != nil {
+		if raw.Cost.CacheRead != nil && *raw.Cost.CacheRead > 0 {
+			score += 15
+		}
+		if raw.Cost.CacheWrite != nil && *raw.Cost.CacheWrite > 0 {
+			score += 15
+		}
+		if len(raw.Cost.Tiers) > 0 || raw.Cost.ContextOver200k != nil {
+			score += 10
+		}
+	}
+	if strings.EqualFold(raw.Status, "deprecated") {
+		score -= 400
+	}
+	return score
+}
+
+func parseSupportedModelsDevCatalog(body []byte) (
+	map[string]*SupportedModelEntry,
+	map[string][]string,
+	[]SupportedPlatformSummary,
+	map[string]modelsDevRawProvider,
+	int,
+	int,
+	error,
+) {
+	var rawProviders map[string]modelsDevRawProvider
+	if err := json.Unmarshal(body, &rawProviders); err != nil {
+		return nil, nil, nil, nil, 0, 0, fmt.Errorf("unmarshal models.dev JSON: %w", err)
+	}
+
+	models := make(map[string]*SupportedModelEntry)
+	platformSetsByModel := make(map[string]map[string]struct{})
+	providerModelSets := make(map[string]map[string]struct{})
+	filteredRaw := make(map[string]modelsDevRawProvider)
+	activeChannels := make(map[string]struct{})
+	rawEntryCount := 0
+
+	for provKey, prov := range rawProviders {
+		providerID := strings.ToLower(strings.TrimSpace(prov.ID))
+		if providerID == "" {
+			providerID = strings.ToLower(strings.TrimSpace(provKey))
+		}
+		spec, supported := supportedModelsDevProviderMap[providerID]
+		if !supported || len(prov.Models) == 0 {
+			continue
+		}
+
+		keptRawModels := make(map[string]modelsDevRawModel)
+		for modelKey, rawModel := range prov.Models {
+			if rawModel.Cost == nil {
+				continue
+			}
+			if rawModel.Cost.Input == nil && rawModel.Cost.Output == nil {
+				continue
+			}
+
+			rawModelID := strings.TrimSpace(rawModel.ID)
+			if rawModelID == "" {
+				rawModelID = strings.TrimSpace(modelKey)
+			}
+			origID := NormalizeOriginalModelID(rawModelID)
+			if origID == "" {
+				continue
+			}
+			if spec.ModelFilter != nil && !spec.ModelFilter(origID, rawModel) {
+				continue
+			}
+
+			keptRawModels[modelKey] = rawModel
+			pricingPM, catalogPricing := convertModelsDevCost(providerID, rawModel)
+			displayName := strings.TrimSpace(rawModel.Name)
+			if displayName == "" {
+				displayName = origID
+			}
+
+			entry := models[origID]
+			if entry == nil {
+				primaryPlatform := inferSystemPlatformForModel(origID, spec.Platform)
+				entry = &SupportedModelEntry{
+					ModelID:      origID,
+					DisplayName:  displayName,
+					Family:       strings.TrimSpace(rawModel.Family),
+					ReleaseDate:  strings.TrimSpace(rawModel.ReleaseDate),
+					Platform:     primaryPlatform,
+					channelByID:  make(map[string]*AccountChannelPriceEntry),
+					rawByChannel: make(map[string]map[string]*CatalogModelPricing),
+				}
+				models[origID] = entry
+				platformSetsByModel[origID] = make(map[string]struct{})
+				platformSetsByModel[origID][primaryPlatform] = struct{}{}
+				if primaryPlatform == PlatformAnthropic || primaryPlatform == PlatformGemini {
+					platformSetsByModel[origID][PlatformAntigravity] = struct{}{}
+				}
+			}
+			platformSetsByModel[origID][spec.Platform] = struct{}{}
+
+			// Preserve exact raw model ID entry per channel (crucial for Bedrock global vs us/eu regional pricing!)
+			if entry.rawByChannel[providerID] == nil {
+				entry.rawByChannel[providerID] = make(map[string]*CatalogModelPricing)
+			}
+			entry.rawByChannel[providerID][strings.ToLower(rawModelID)] = catalogPricing
+
+			candScore := scoreChannelEntry(spec, origID, rawModelID, rawModel)
+			existingCh := entry.channelByID[providerID]
+			if existingCh == nil || candScore > existingCh.score {
+				chEntry := &AccountChannelPriceEntry{
+					ChannelID:   providerID,
+					ChannelName: spec.ChannelLabel,
+					Platform:    spec.Platform,
+					RawModelID:  rawModelID,
+					Pricing:     pricingPM,
+					catalog:     catalogPricing,
+					score:       candScore,
+				}
+				entry.channelByID[providerID] = chEntry
+			}
+
+			if providerModelSets[providerID] == nil {
+				providerModelSets[providerID] = make(map[string]struct{})
+			}
+			providerModelSets[providerID][origID] = struct{}{}
+			activeChannels[providerID] = struct{}{}
+			rawEntryCount++
+		}
+
+		if len(keptRawModels) > 0 {
+			filteredRaw[providerID] = modelsDevRawProvider{
+				ID:     providerID,
+				Name:   spec.ChannelLabel,
+				API:    prov.API,
+				Models: keptRawModels,
+			}
+		}
+	}
+
+	if len(models) == 0 {
+		return nil, nil, nil, nil, 0, 0, fmt.Errorf("no valid supported pricing entries found in models.dev catalog")
+	}
+
+	platformModelCounts := make(map[string]int)
+	for origID, entry := range models {
+		channels := make([]AccountChannelPriceEntry, 0, len(entry.channelByID))
+		for _, ch := range entry.channelByID {
+			channels = append(channels, *ch)
+		}
+		sort.SliceStable(channels, func(i, j int) bool {
+			if channels[i].score != channels[j].score {
+				return channels[i].score > channels[j].score
+			}
+			return channels[i].ChannelID < channels[j].ChannelID
+		})
+		channels[0].IsDefault = true
+		entry.Channels = channels
+		entry.DefaultChannelID = channels[0].ChannelID
+		entry.DefaultChannelName = channels[0].ChannelName
+		entry.DefaultPricing = channels[0].Pricing
+		entry.defaultCatalog = channels[0].catalog
+		if channels[0].Pricing.DisplayName != "" {
+			entry.DisplayName = channels[0].Pricing.DisplayName
+		}
+
+		// Rebuild channelByID pointers against sorted slice
+		entry.channelByID = make(map[string]*AccountChannelPriceEntry, len(channels))
+		for i := range entry.Channels {
+			entry.channelByID[entry.Channels[i].ChannelID] = &entry.Channels[i]
+		}
+
+		// Collect platforms in canonical domain.Platforms() display order
+		pSet := platformSetsByModel[origID]
+		orderedPlatforms := make([]string, 0, len(pSet))
+		for _, pSpec := range domain.Platforms() {
+			if _, ok := pSet[pSpec.ID]; ok {
+				orderedPlatforms = append(orderedPlatforms, pSpec.ID)
+				platformModelCounts[pSpec.ID]++
+			}
+		}
+		entry.Platforms = orderedPlatforms
+	}
+
+	providerModels := make(map[string][]string, len(providerModelSets))
+	for pid, set := range providerModelSets {
+		list := make([]string, 0, len(set))
+		for m := range set {
+			list = append(list, m)
+		}
+		sort.Strings(list)
+		providerModels[pid] = list
+	}
+
+	platformSummaries := make([]SupportedPlatformSummary, 0, len(domain.Platforms()))
+	for _, pSpec := range domain.Platforms() {
+		platformSummaries = append(platformSummaries, SupportedPlatformSummary{
+			ID:         pSpec.ID,
+			Name:       pSpec.DisplayName,
+			ModelCount: platformModelCounts[pSpec.ID],
+		})
+	}
+
+	return models, providerModels, platformSummaries, filteredRaw, len(activeChannels), rawEntryCount, nil
+}
+
+func convertModelsDevCost(providerID string, raw modelsDevRawModel) (TokenPricingPerMillion, *CatalogModelPricing) {
+	c := raw.Cost
+	var inPM, outPM, cacheReadPM, cacheWritePM float64
+	if c.Input != nil && *c.Input >= 0 {
+		inPM = *c.Input
+	}
+	if c.Output != nil && *c.Output >= 0 {
+		outPM = *c.Output
+	}
+	if c.CacheRead != nil && *c.CacheRead >= 0 {
+		cacheReadPM = *c.CacheRead
+	}
+	if c.CacheWrite != nil && *c.CacheWrite >= 0 {
+		cacheWritePM = *c.CacheWrite
+	}
+
+	threshold, inMult, outMult := extractLongContextFromModelsDevCost(c, inPM, outPM)
+
+	pm := TokenPricingPerMillion{
+		DisplayName:           strings.TrimSpace(raw.Name),
+		InputPerMillion:       inPM,
+		OutputPerMillion:      outPM,
+		CacheReadPerMillion:   cacheReadPM,
+		CacheWritePerMillion:  cacheWritePM,
+		LongContextThreshold:  threshold,
+		LongContextInputMult:  inMult,
+		LongContextOutputMult: outMult,
+	}
+
+	mode := "chat"
+	if raw.Modalities != nil && len(raw.Modalities.Output) > 0 {
+		hasText := false
+		hasImage := false
+		for _, m := range raw.Modalities.Output {
+			switch strings.ToLower(m) {
+			case "text":
+				hasText = true
+			case "image":
+				hasImage = true
+			}
+		}
+		if hasImage && !hasText {
+			mode = "image_generation"
+		}
+	}
+
+	cat := tokenPricingPerMillionToCatalog(pm, providerID, mode, c.CacheWrite != nil)
+	return pm, cat
+}
+
+func extractLongContextFromModelsDevCost(c *modelsDevRawCost, baseInPM, baseOutPM float64) (int, float64, float64) {
+	if c == nil {
+		return 0, 0, 0
+	}
+	bestThreshold := 0
+	var tierIn, tierOut float64
+
+	for _, t := range c.Tiers {
+		if t.Tier == nil || !strings.EqualFold(t.Tier.Type, "context") || t.Tier.Size <= 0 {
+			continue
+		}
+		if bestThreshold == 0 || t.Tier.Size < bestThreshold {
+			bestThreshold = t.Tier.Size
+			tierIn, tierOut = 0, 0
+			if t.Input != nil && *t.Input > 0 {
+				tierIn = *t.Input
+			}
+			if t.Output != nil && *t.Output > 0 {
+				tierOut = *t.Output
+			}
+		}
+	}
+	if bestThreshold == 0 && c.ContextOver200k != nil {
+		bestThreshold = 200_000
+		if c.ContextOver200k.Input != nil && *c.ContextOver200k.Input > 0 {
+			tierIn = *c.ContextOver200k.Input
+		}
+		if c.ContextOver200k.Output != nil && *c.ContextOver200k.Output > 0 {
+			tierOut = *c.ContextOver200k.Output
+		}
+	}
+	if bestThreshold <= 0 {
+		return 0, 0, 0
+	}
+
+	inMult, outMult := 1.0, 1.0
+	if tierIn > 0 && baseInPM > 0 {
+		inMult = tierIn / baseInPM
+	}
+	if tierOut > 0 && baseOutPM > 0 {
+		outMult = tierOut / baseOutPM
+	}
+	if inMult <= 1 && outMult <= 1 {
+		return 0, 0, 0
+	}
+	return bestThreshold, roundMultiplier(inMult), roundMultiplier(outMult)
+}
+
+func roundMultiplier(v float64) float64 {
+	return math.Round(v*10000) / 10000
+}
+
+func tokenPricingPerMillionToCatalog(pm TokenPricingPerMillion, provider, mode string, explicitCacheWrite bool) *CatalogModelPricing {
+	if mode == "" {
+		mode = "chat"
+	}
+	cat := &CatalogModelPricing{
+		InputCostPerToken:                   pm.InputPerMillion / tokensPerMillion,
+		OutputCostPerToken:                  pm.OutputPerMillion / tokensPerMillion,
+		CacheReadInputTokenCost:             pm.CacheReadPerMillion / tokensPerMillion,
+		CacheCreationInputTokenCost:         pm.CacheWritePerMillion / tokensPerMillion,
+		CacheCreationInputTokenCostExplicit: explicitCacheWrite || pm.CacheWritePerMillion > 0,
+		LongContextInputTokenThreshold:      pm.LongContextThreshold,
+		LongContextInputCostMultiplier:      pm.LongContextInputMult,
+		LongContextOutputCostMultiplier:     pm.LongContextOutputMult,
+		CacheStorageCostPerTokenPerHour:     pm.CacheStoragePerMillionPerHour / tokensPerMillion,
+		Provider:                            provider,
+		Mode:                                mode,
+		SupportsPromptCaching:               pm.CacheReadPerMillion > 0 || pm.CacheWritePerMillion > 0,
+	}
+	if pm.CacheWrite1hPerMillion != nil && *pm.CacheWrite1hPerMillion >= 0 {
+		cat.CacheCreationInputTokenCostAbove1hr = *pm.CacheWrite1hPerMillion / tokensPerMillion
+		cat.SupportsPromptCaching = true
+	}
+	return cat
+}
+
+func overrideToCatalog(ov ModelPricingOverride) *CatalogModelPricing {
+	cat := tokenPricingPerMillionToCatalog(ov.Custom, "custom", "chat", true)
+	cat.priceOverrides = tokenPriceOverrides{
+		input:     true,
+		output:    true,
+		cacheRead: true,
+	}
+	return cat
+}
+
+// rebuildEffectiveDefaultLocked rebuilds s.effectiveDefaultData from supported models + Default overrides.
+func (s *PricingService) rebuildEffectiveDefaultLocked() {
+	next := make(map[string]*CatalogModelPricing, len(s.models)+len(s.overrides.Default))
+
+	for modelID, entry := range s.models {
+		if entry.defaultCatalog != nil {
+			next[modelID] = entry.defaultCatalog
+		}
+	}
+
+	for modelID, ov := range s.overrides.Default {
+		normID := NormalizeOriginalModelID(modelID)
+		if normID == "" {
+			continue
+		}
+		next[normID] = overrideToCatalog(ov)
+	}
+
+	s.effectiveDefaultData = next
+}
+
+// --- Admin Mutations (Edit custom price for Default, Account-Type Channel, or System Group; Lock; Reset) ---
+
+// UpsertCustomPricing saves custom per-million-token prices for a model
+// (either in default scope when groupID == nil/<=0, or for a specific system group).
+func (s *PricingService) UpsertCustomPricing(ctx context.Context, groupID *int64, modelID, platform string, custom TokenPricingPerMillion) error {
+	return s.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
+		GroupID:  groupID,
+		ModelID:  modelID,
+		Platform: platform,
+		Custom:   custom,
+	})
+}
+
+// UpsertCustomPricingWithOptions saves custom prices at one of three scopes:
+//   - GroupID > 0: System Group override (highest priority, never overwritten by sync).
+//   - ChannelID != "": Account-Type Channel override (if equal to model's default channel, unified with Default).
+//   - Otherwise: Global Default override.
+func (s *PricingService) UpsertCustomPricingWithOptions(ctx context.Context, opts UpsertPricingOverrideInput) error {
+	normID := NormalizeOriginalModelID(opts.ModelID)
+	if normID == "" {
+		return errors.New("model_id is required")
+	}
+	channelID := strings.ToLower(strings.TrimSpace(opts.ChannelID))
+	hasGroup := opts.GroupID != nil && *opts.GroupID > 0
+	if hasGroup && channelID != "" {
+		return errors.New("group_id and channel_id cannot both be specified")
+	}
+	if err := validateCustomTokenPricing(opts.Custom); err != nil {
+		return err
+	}
+
+	custom := opts.Custom
+	custom.DisplayName = strings.TrimSpace(custom.DisplayName)
+	platform := strings.ToLower(strings.TrimSpace(opts.Platform))
+
+	locked := true
+	if opts.Locked != nil {
+		locked = *opts.Locked
+	}
+
+	ov := ModelPricingOverride{
+		Platform:  platform,
+		Custom:    custom,
+		Locked:    locked,
+		IsCustom:  true,
+		UpdatedAt: time.Now(),
+	}
+
+	s.mu.Lock()
+	entry := s.models[normID]
+	if ov.Platform == "" {
+		if entry != nil {
+			ov.Platform = entry.Platform
+		} else {
+			ov.Platform = inferSystemPlatformForModel(normID, "")
+		}
+	}
+
+	switch {
+	case hasGroup:
+		ov.Locked = false // system group overrides are always independent of models.dev sync
+		gidKey := strconv.FormatInt(*opts.GroupID, 10)
+		if s.overrides.Groups == nil {
+			s.overrides.Groups = make(map[string]map[string]ModelPricingOverride)
+		}
+		if s.overrides.Groups[gidKey] == nil {
+			s.overrides.Groups[gidKey] = make(map[string]ModelPricingOverride)
+		}
+		s.overrides.Groups[gidKey][normID] = ov
+
+	case channelID != "" && (entry == nil || channelID != entry.DefaultChannelID):
+		if _, knownSpec := supportedModelsDevProviderMap[channelID]; !knownSpec && (entry == nil || entry.channelByID[channelID] == nil) {
+			s.mu.Unlock()
+			return fmt.Errorf("unsupported channel_id: %s", channelID)
+		}
+		if s.overrides.Channels == nil {
+			s.overrides.Channels = make(map[string]map[string]ModelPricingOverride)
+		}
+		if s.overrides.Channels[channelID] == nil {
+			s.overrides.Channels[channelID] = make(map[string]ModelPricingOverride)
+		}
+		s.overrides.Channels[channelID][normID] = ov
+
+	default:
+		if s.overrides.Default == nil {
+			s.overrides.Default = make(map[string]ModelPricingOverride)
+		}
+		if channelID != "" && ov.Custom.DisplayName == "" {
+			if existing, ok := s.overrides.Default[normID]; ok && existing.Custom.DisplayName != "" {
+				ov.Custom.DisplayName = existing.Custom.DisplayName
+			}
+		}
+		s.overrides.Default[normID] = ov
+		// Keep default channel unified in Default (remove any stale duplicate under Channels[DefaultChannelID])
+		if entry != nil && entry.DefaultChannelID != "" {
+			if cm := s.overrides.Channels[entry.DefaultChannelID]; cm != nil {
+				delete(cm, normID)
+				if len(cm) == 0 {
+					delete(s.overrides.Channels, entry.DefaultChannelID)
+				}
+			}
+		}
+		s.rebuildEffectiveDefaultLocked()
+	}
+
+	overridesCopy := clonePricingOverridesState(s.overrides)
+	s.mu.Unlock()
+
+	return s.persistSettingJSON(ctx, SettingKeyModelPricingOverrides, overridesCopy)
+}
+
+// SetChannelPriceLock locks or unlocks a specific (model_id, channel_id) channel price so automatic
+// sync skips locked channels on subsequent updates.
+func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, channelID string, locked bool) error {
+	normID := NormalizeOriginalModelID(modelID)
+	if normID == "" {
+		return errors.New("model_id is required")
+	}
+	channelID = strings.ToLower(strings.TrimSpace(channelID))
+
+	s.mu.Lock()
+	entry := s.models[normID]
+	if channelID == "" && entry != nil {
+		channelID = entry.DefaultChannelID
+	}
+
+	isDefaultChannel := entry == nil || channelID == "" || channelID == entry.DefaultChannelID
+	now := time.Now()
+
+	if isDefaultChannel {
+		existing, hasExisting := s.overrides.Default[normID]
+		if locked {
+			if hasExisting {
+				if !existing.Locked {
+					existing.IsCustom = true
+				}
+				existing.Locked = true
+				existing.UpdatedAt = now
+				s.overrides.Default[normID] = existing
+			} else {
+				if entry == nil {
+					s.mu.Unlock()
+					return fmt.Errorf("model %q not found", normID)
+				}
+				if s.overrides.Default == nil {
+					s.overrides.Default = make(map[string]ModelPricingOverride)
+				}
+				s.overrides.Default[normID] = ModelPricingOverride{
+					Platform:  entry.Platform,
+					Custom:    entry.DefaultPricing,
+					Locked:    true,
+					IsCustom:  false,
+					UpdatedAt: now,
+				}
+			}
+		} else if hasExisting {
+			if existing.IsCustom {
+				existing.Locked = false
+				existing.UpdatedAt = now
+				s.overrides.Default[normID] = existing
+			} else {
+				delete(s.overrides.Default, normID)
+			}
+		}
+		s.rebuildEffectiveDefaultLocked()
+	} else {
+		var chEntry *AccountChannelPriceEntry
+		if entry != nil {
+			chEntry = entry.channelByID[channelID]
+		}
+		chMap := s.overrides.Channels[channelID]
+		existing, hasExisting := ModelPricingOverride{}, false
+		if chMap != nil {
+			existing, hasExisting = chMap[normID]
+		}
+		if locked {
+			if hasExisting {
+				if !existing.Locked {
+					existing.IsCustom = true
+				}
+				existing.Locked = true
+				existing.UpdatedAt = now
+				chMap[normID] = existing
+			} else {
+				if chEntry == nil {
+					s.mu.Unlock()
+					return fmt.Errorf("channel %q not found for model %q", channelID, normID)
+				}
+				if s.overrides.Channels == nil {
+					s.overrides.Channels = make(map[string]map[string]ModelPricingOverride)
+				}
+				if s.overrides.Channels[channelID] == nil {
+					s.overrides.Channels[channelID] = make(map[string]ModelPricingOverride)
+				}
+				s.overrides.Channels[channelID][normID] = ModelPricingOverride{
+					Platform:  entry.Platform,
+					Custom:    chEntry.Pricing,
+					Locked:    true,
+					IsCustom:  false,
+					UpdatedAt: now,
+				}
+			}
+		} else if hasExisting {
+			if existing.IsCustom {
+				existing.Locked = false
+				existing.UpdatedAt = now
+				chMap[normID] = existing
+			} else {
+				delete(chMap, normID)
+				if len(chMap) == 0 {
+					delete(s.overrides.Channels, channelID)
+				}
+			}
+		}
+	}
+
+	overridesCopy := clonePricingOverridesState(s.overrides)
+	s.mu.Unlock()
+
+	return s.persistSettingJSON(ctx, SettingKeyModelPricingOverrides, overridesCopy)
+}
+
+// ResetModelPricing resets a model's override in default or group scope.
+func (s *PricingService) ResetModelPricing(ctx context.Context, groupID *int64, modelID string) error {
+	return s.ResetModelPricingWithScope(ctx, groupID, "", modelID)
+}
+
+// ResetModelPricingWithScope resets a model's override/lock at Default, Channel, or Group scope:
+//   - If groupID > 0: removes the group override so the group falls back to matched channel / default price.
+//   - If channelID != "": removes the channel override/lock (unified with Default if default channel).
+//   - Otherwise: removes the default override/lock (restores models.dev default, or deletes custom-only model).
+func (s *PricingService) ResetModelPricingWithScope(ctx context.Context, groupID *int64, channelID, modelID string) error {
+	normID := NormalizeOriginalModelID(modelID)
+	if normID == "" {
+		return errors.New("model_id is required")
+	}
+	channelID = strings.ToLower(strings.TrimSpace(channelID))
+	hasGroup := groupID != nil && *groupID > 0
+	if hasGroup && channelID != "" {
+		return errors.New("group_id and channel_id cannot both be specified")
+	}
+
+	s.mu.Lock()
+	entry := s.models[normID]
+	switch {
+	case hasGroup:
+		gidKey := strconv.FormatInt(*groupID, 10)
+		if gm := s.overrides.Groups[gidKey]; gm != nil {
+			delete(gm, normID)
+			if len(gm) == 0 {
+				delete(s.overrides.Groups, gidKey)
+			}
+		}
+	case channelID != "" && (entry == nil || channelID != entry.DefaultChannelID):
+		if cm := s.overrides.Channels[channelID]; cm != nil {
+			delete(cm, normID)
+			if len(cm) == 0 {
+				delete(s.overrides.Channels, channelID)
+			}
+		}
+	default:
+		delete(s.overrides.Default, normID)
+		if entry != nil && entry.DefaultChannelID != "" {
+			if cm := s.overrides.Channels[entry.DefaultChannelID]; cm != nil {
+				delete(cm, normID)
+				if len(cm) == 0 {
+					delete(s.overrides.Channels, entry.DefaultChannelID)
+				}
+			}
+		}
+		s.rebuildEffectiveDefaultLocked()
+	}
+	overridesCopy := clonePricingOverridesState(s.overrides)
+	s.mu.Unlock()
+
+	return s.persistSettingJSON(ctx, SettingKeyModelPricingOverrides, overridesCopy)
+}
+
+func validateCustomTokenPricing(p TokenPricingPerMillion) error {
+	checkNonNeg := func(name string, v float64) error {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return fmt.Errorf("%s must be a non-negative finite number", name)
+		}
 		return nil
 	}
-
-	// 标准化模型名称（同时兼容 "models/xxx"、VertexAI 资源名等前缀）
-	modelLower := strings.ToLower(strings.TrimSpace(modelName))
-	lookupCandidates := s.buildModelLookupCandidates(modelLower)
-
-	// 1~3. 确定性识别（精确名 / 已知拼写变体 / 去掉日期版本后缀）
-	if pricing := s.lookupIdentifiedModelPricingLocked(lookupCandidates); pricing != nil {
-		return pricing
+	if err := checkNonNeg("input_per_million", p.InputPerMillion); err != nil {
+		return err
 	}
-
-	// 4. 基于模型系列匹配（Claude）
-	if pricing := s.matchByModelFamily(lookupCandidates[0]); pricing != nil {
-		return pricing
+	if err := checkNonNeg("output_per_million", p.OutputPerMillion); err != nil {
+		return err
 	}
-
-	// 5. OpenAI 模型回退策略
-	if strings.HasPrefix(lookupCandidates[0], "gpt-") {
-		return s.matchOpenAIModel(lookupCandidates[0])
+	if err := checkNonNeg("cache_read_per_million", p.CacheReadPerMillion); err != nil {
+		return err
 	}
-
+	if err := checkNonNeg("cache_write_per_million", p.CacheWritePerMillion); err != nil {
+		return err
+	}
+	if p.CacheWrite1hPerMillion != nil {
+		if err := checkNonNeg("cache_write_1h_per_million", *p.CacheWrite1hPerMillion); err != nil {
+			return err
+		}
+	}
+	if p.LongContextThreshold < 0 {
+		return errors.New("long_context_threshold must be non-negative")
+	}
+	if err := checkNonNeg("long_context_input_multiplier", p.LongContextInputMult); err != nil {
+		return err
+	}
+	if err := checkNonNeg("long_context_output_multiplier", p.LongContextOutputMult); err != nil {
+		return err
+	}
 	return nil
 }
 
-// lookupIdentifiedModelPricingLocked 只做"确定性识别"的三步查找：精确键、已知拼写
-// 变体、去掉日期/版本后缀后的同名条目。它刻意不包含 matchByModelFamily /
-// matchOpenAIModel 这类按子串猜系列的兜底——那些兜底会给任意名字都返回一个价格。
-// 调用方必须持有 s.mu 读锁。
-func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []string) *LiteLLMModelPricing {
-	if len(lookupCandidates) == 0 {
+func clonePricingOverridesState(in PricingOverridesState) PricingOverridesState {
+	out := PricingOverridesState{
+		Default:  make(map[string]ModelPricingOverride, len(in.Default)),
+		Channels: make(map[string]map[string]ModelPricingOverride, len(in.Channels)),
+		Groups:   make(map[string]map[string]ModelPricingOverride, len(in.Groups)),
+	}
+	for k, v := range in.Default {
+		out.Default[k] = cloneModelPricingOverride(v)
+	}
+	for chID, cm := range in.Channels {
+		if len(cm) == 0 {
+			continue
+		}
+		m := make(map[string]ModelPricingOverride, len(cm))
+		for k, v := range cm {
+			m[k] = cloneModelPricingOverride(v)
+		}
+		out.Channels[chID] = m
+	}
+	for gid, gm := range in.Groups {
+		if len(gm) == 0 {
+			continue
+		}
+		m := make(map[string]ModelPricingOverride, len(gm))
+		for k, v := range gm {
+			m[k] = cloneModelPricingOverride(v)
+		}
+		out.Groups[gid] = m
+	}
+	return out
+}
+
+func cloneModelPricingOverride(in ModelPricingOverride) ModelPricingOverride {
+	cp := in
+	if in.Custom.CacheWrite1hPerMillion != nil {
+		v := *in.Custom.CacheWrite1hPerMillion
+		cp.Custom.CacheWrite1hPerMillion = &v
+	}
+	return cp
+}
+
+// --- Admin Catalog Listing & Filtering (Scoped to System Groups & Supported Platforms) ---
+
+// ListModelPricingCatalog returns the paginated list of system-supported models,
+// scoped to either Global Default or a specific System Group (filtered by that group's platform).
+func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *ModelPricingListResult {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if query.Page < 1 {
+		query.Page = 1
+	}
+	if query.PageSize <= 0 || query.PageSize > 200 {
+		query.PageSize = 50
+	}
+
+	groupOverrideCounts := make(map[string]int)
+	for _, gm := range s.overrides.Groups {
+		for m := range gm {
+			groupOverrideCounts[m]++
+		}
+	}
+
+	var activeGroupOverrides map[string]ModelPricingOverride
+	if query.GroupID > 0 {
+		activeGroupOverrides = s.overrides.Groups[strconv.FormatInt(query.GroupID, 10)]
+	}
+
+	allIDs := make(map[string]struct{}, len(s.models)+len(s.overrides.Default)+len(activeGroupOverrides))
+	for id := range s.models {
+		allIDs[id] = struct{}{}
+	}
+	for id := range s.overrides.Default {
+		allIDs[id] = struct{}{}
+	}
+	for id := range activeGroupOverrides {
+		allIDs[id] = struct{}{}
+	}
+
+	needle := strings.ToLower(strings.TrimSpace(query.Search))
+	filterMode := strings.ToLower(strings.TrimSpace(query.Filter))
+	groupPlatform := strings.ToLower(strings.TrimSpace(query.GroupPlatform))
+	platformFilter := strings.ToLower(strings.TrimSpace(query.Platform))
+	if groupPlatform != "" && groupPlatform != PlatformComposite {
+		platformFilter = groupPlatform
+	}
+
+	items := make([]ModelPricingListItem, 0, len(allIDs))
+	for modelID := range allIDs {
+		item := s.buildListItemLocked(modelID, query.GroupID, activeGroupOverrides, groupOverrideCounts[modelID])
+
+		// Platform filter (automatically applied for single-platform system groups, or manual filter)
+		if platformFilter != "" && platformFilter != "all" {
+			// Always show models explicitly overridden in the currently selected group
+			if !(query.GroupID > 0 && item.IsGroupOverridden) {
+				if !modelSupportsPlatform(item, platformFilter) {
+					continue
+				}
+			}
+		}
+
+		// Status filter
+		switch filterMode {
+		case "overridden":
+			if query.GroupID > 0 {
+				if !item.IsGroupOverridden && item.ChannelOverrideCount == 0 {
+					continue
+				}
+			} else {
+				if !item.IsDefaultModified && !item.IsCustomOnly && item.ChannelOverrideCount == 0 {
+					continue
+				}
+			}
+		case "custom":
+			if !item.IsCustomOnly && item.Source != "default_custom" && item.Source != "group_custom" && item.ChannelOverrideCount == 0 {
+				continue
+			}
+		case "locked":
+			if item.LockedChannelCount == 0 {
+				continue
+			}
+		}
+
+		if needle != "" && !matchesPricingSearch(item, needle) {
+			continue
+		}
+
+		items = append(items, item)
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if needle != "" {
+			iExact := items[i].ModelID == needle
+			jExact := items[j].ModelID == needle
+			if iExact != jExact {
+				return iExact
+			}
+			iPrefix := strings.HasPrefix(items[i].ModelID, needle) || startsAtWordBoundary(items[i].ModelID, needle)
+			jPrefix := strings.HasPrefix(items[j].ModelID, needle) || startsAtWordBoundary(items[j].ModelID, needle)
+			if iPrefix != jPrefix {
+				return iPrefix
+			}
+		}
+		if query.GroupID > 0 && items[i].IsGroupOverridden != items[j].IsGroupOverridden {
+			return items[i].IsGroupOverridden
+		}
+		if items[i].IsCustomOnly != items[j].IsCustomOnly {
+			return items[i].IsCustomOnly
+		}
+		if items[i].ReleaseDate != items[j].ReleaseDate {
+			return items[i].ReleaseDate > items[j].ReleaseDate
+		}
+		return items[i].ModelID < items[j].ModelID
+	})
+
+	total := len(items)
+	start := (query.Page - 1) * query.PageSize
+	if start > total {
+		start = total
+	}
+	end := start + query.PageSize
+	if end > total {
+		end = total
+	}
+
+	platforms := make([]SupportedPlatformSummary, len(s.platformSummaries))
+	copy(platforms, s.platformSummaries)
+
+	return &ModelPricingListResult{
+		Items:         items[start:end],
+		Total:         total,
+		Page:          query.Page,
+		PageSize:      query.PageSize,
+		GroupPlatform: groupPlatform,
+		Platforms:     platforms,
+	}
+}
+
+func modelSupportsPlatform(item ModelPricingListItem, platform string) bool {
+	if strings.EqualFold(item.Platform, platform) {
+		return true
+	}
+	for _, p := range item.Platforms {
+		if strings.EqualFold(p, platform) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *PricingService) buildListItemLocked(
+	modelID string,
+	groupID int64,
+	activeGroupOverrides map[string]ModelPricingOverride,
+	groupOverrideCount int,
+) ModelPricingListItem {
+	entry := s.models[modelID]
+	defaultOv, hasDefaultOv := s.overrides.Default[modelID]
+	defaultIsCustom := hasDefaultOv && (defaultOv.IsCustom || !defaultOv.Locked)
+
+	platform := inferSystemPlatformForModel(modelID, "")
+	if hasDefaultOv && defaultOv.Platform != "" {
+		platform = defaultOv.Platform
+	}
+
+	item := ModelPricingListItem{
+		ModelID:            modelID,
+		DisplayName:        modelID,
+		Platform:           platform,
+		Platforms:          []string{platform},
+		IsCustomOnly:       entry == nil,
+		IsDefaultModified:  defaultIsCustom,
+		IsDefaultLocked:    hasDefaultOv && defaultOv.Locked,
+		GroupOverrideCount: groupOverrideCount,
+		ChannelPrices:      []AccountChannelPriceEntry{},
+	}
+
+	var defaultPricing TokenPricingPerMillion
+	defaultSource := "default_auto"
+	var defaultUpdatedAt *time.Time
+
+	if entry != nil {
+		item.DisplayName = entry.DisplayName
+		item.Platform = entry.Platform
+		item.Platforms = append([]string(nil), entry.Platforms...)
+		item.Family = entry.Family
+		item.ReleaseDate = entry.ReleaseDate
+		item.DefaultChannelID = entry.DefaultChannelID
+		item.DefaultChannelName = entry.DefaultChannelName
+		item.ChannelPrices = make([]AccountChannelPriceEntry, len(entry.Channels))
+		for i, ch := range entry.Channels {
+			origPricing := ch.Pricing
+			chCopy := ch
+			if chCopy.IsDefault {
+				if hasDefaultOv {
+					chCopy.Pricing = defaultOv.Custom
+					chCopy.IsLocked = defaultOv.Locked
+					chCopy.IsOverridden = defaultIsCustom
+					origCopy := origPricing
+					chCopy.SyncedPricing = &origCopy
+					t := defaultOv.UpdatedAt
+					chCopy.UpdatedAt = &t
+				}
+			} else if cm := s.overrides.Channels[chCopy.ChannelID]; cm != nil {
+				if chOv, ok := cm[modelID]; ok {
+					chIsCustom := chOv.IsCustom || !chOv.Locked
+					chCopy.Pricing = chOv.Custom
+					chCopy.IsLocked = chOv.Locked
+					chCopy.IsOverridden = chIsCustom
+					origCopy := origPricing
+					chCopy.SyncedPricing = &origCopy
+					t := chOv.UpdatedAt
+					chCopy.UpdatedAt = &t
+				}
+			}
+			if chCopy.IsOverridden {
+				item.ChannelOverrideCount++
+			}
+			if chCopy.IsLocked {
+				item.LockedChannelCount++
+			}
+			item.ChannelPrices[i] = chCopy
+		}
+		defaultPricing = entry.DefaultPricing
+	}
+
+	if hasDefaultOv {
+		defaultPricing = defaultOv.Custom
+		if defaultIsCustom {
+			defaultSource = "default_custom"
+		}
+		t := defaultOv.UpdatedAt
+		defaultUpdatedAt = &t
+		if defaultOv.Custom.DisplayName != "" {
+			item.DisplayName = defaultOv.Custom.DisplayName
+		}
+	}
+
+	if groupID > 0 {
+		if grpOv, ok := activeGroupOverrides[modelID]; ok {
+			t := grpOv.UpdatedAt
+			item.EffectivePricing = grpOv.Custom
+			item.DefaultPricing = &defaultPricing
+			item.Source = "group_custom"
+			item.IsGroupOverridden = true
+			item.UpdatedAt = &t
+			if grpOv.Platform != "" && entry == nil {
+				item.Platform = grpOv.Platform
+				item.Platforms = []string{grpOv.Platform}
+			}
+			if grpOv.Custom.DisplayName != "" {
+				item.DisplayName = grpOv.Custom.DisplayName
+			}
+			return item
+		}
+		item.EffectivePricing = defaultPricing
+		item.DefaultPricing = &defaultPricing
+		item.Source = "inherited_default"
+		item.IsGroupOverridden = false
+		item.UpdatedAt = defaultUpdatedAt
+		return item
+	}
+
+	item.EffectivePricing = defaultPricing
+	item.Source = defaultSource
+	item.UpdatedAt = defaultUpdatedAt
+	return item
+}
+
+func matchesPricingSearch(item ModelPricingListItem, needle string) bool {
+	if strings.Contains(item.ModelID, needle) ||
+		strings.Contains(strings.ToLower(item.DisplayName), needle) ||
+		strings.Contains(strings.ToLower(item.Family), needle) ||
+		strings.Contains(strings.ToLower(item.Platform), needle) ||
+		strings.Contains(strings.ToLower(item.DefaultChannelName), needle) {
+		return true
+	}
+	for _, ch := range item.ChannelPrices {
+		if strings.Contains(strings.ToLower(ch.ChannelID), needle) ||
+			strings.Contains(strings.ToLower(ch.ChannelName), needle) ||
+			strings.Contains(strings.ToLower(ch.RawModelID), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func startsAtWordBoundary(text, needle string) bool {
+	value := strings.ToLower(text)
+	if len(needle) == 0 || len(needle) > len(value) {
+		return false
+	}
+	for i := 0; i <= len(value)-len(needle); i++ {
+		if i > 0 {
+			prev := value[i-1]
+			if prev != ' ' && prev != '-' && prev != '.' && prev != '_' && prev != '/' {
+				continue
+			}
+		}
+		if strings.HasPrefix(value[i:], needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// --- Runtime Billing Lookups (Group > Matched Account Channel > Default Channel) ---
+
+// GetModelPricingForGroup returns a system group's custom pricing override if configured.
+// Returns (nil, false) when the group has no separate override.
+func (s *PricingService) GetModelPricingForGroup(groupID int64, modelName string) (*CatalogModelPricing, bool) {
+	if s == nil || groupID <= 0 || strings.TrimSpace(modelName) == "" {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	gm := s.overrides.Groups[strconv.FormatInt(groupID, 10)]
+	if len(gm) == 0 {
+		return nil, false
+	}
+
+	modelLower := strings.ToLower(strings.TrimSpace(modelName))
+	candidates := s.buildModelLookupCandidates(modelLower)
+	for _, cand := range candidates {
+		norm := NormalizeOriginalModelID(cand)
+		if ov, ok := gm[norm]; ok {
+			return overrideToCatalog(ov), true
+		}
+		if ov, ok := gm[cand]; ok {
+			return overrideToCatalog(ov), true
+		}
+	}
+	return nil, false
+}
+
+// GetModelPricingForProvider looks up the pricing for a specific account-type matched
+// models.dev channel (e.g. amazon-bedrock, google-vertex-anthropic, google-vertex,
+// opencode-go, cline-pass, zhipuai-coding-plan, etc.).
+//
+// If providerID matches the model's default channel AND the admin has customized the global
+// default price for that model, this returns (nil, false) so the default custom price applies.
+// Distinct account channels (e.g. amazon-bedrock vs default anthropic) always return their
+// channel-specific price (Priority: Group > Matched Channel > Default Channel).
+func (s *PricingService) GetModelPricingForProvider(providerID, modelName, rawUpstreamModel string) (*CatalogModelPricing, bool) {
+	providerID = strings.ToLower(strings.TrimSpace(providerID))
+	if s == nil || providerID == "" || strings.TrimSpace(modelName) == "" {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rawLower := strings.ToLower(strings.TrimSpace(rawUpstreamModel))
+	modelLower := strings.ToLower(strings.TrimSpace(modelName))
+	lookupCandidates := s.buildModelLookupCandidates(modelLower)
+
+	findEntry := func() *SupportedModelEntry {
+		for _, cand := range lookupCandidates {
+			if e := s.models[cand]; e != nil {
+				return e
+			}
+			if norm := NormalizeOriginalModelID(cand); norm != "" {
+				if e := s.models[norm]; e != nil {
+					return e
+				}
+			}
+		}
+		baseName := s.extractBaseName(NormalizeOriginalModelID(lookupCandidates[0]))
+		if baseName != "" {
+			if e := s.models[baseName]; e != nil {
+				return e
+			}
+		}
 		return nil
 	}
 
-	// 1. 精确匹配
-	for _, candidate := range lookupCandidates {
-		if candidate == "" {
-			continue
+	entry := findEntry()
+
+	// 1. Explicit per-channel custom override or locked price snapshot always takes precedence for this channel.
+	if chMap := s.overrides.Channels[providerID]; len(chMap) > 0 {
+		if entry != nil {
+			if ov, ok := chMap[entry.ModelID]; ok {
+				return overrideToCatalog(ov), true
+			}
 		}
-		if pricing, ok := s.pricingData[candidate]; ok {
-			return pricing
+		for _, cand := range lookupCandidates {
+			if norm := NormalizeOriginalModelID(cand); norm != "" {
+				if ov, ok := chMap[norm]; ok {
+					return overrideToCatalog(ov), true
+				}
+			}
+			if ov, ok := chMap[cand]; ok {
+				return overrideToCatalog(ov), true
+			}
 		}
 	}
 
-	// 2. 处理常见的模型名称变体
-	// claude-opus-4-5-20251101 -> claude-opus-4.5-20251101
-	for _, candidate := range lookupCandidates {
-		normalized := strings.ReplaceAll(candidate, "-4-5-", "-4.5-")
-		if pricing, ok := s.pricingData[normalized]; ok {
-			return pricing
+	if entry == nil {
+		return nil, false
+	}
+
+	// 2. If this account uses the model's default channel and the admin customized or locked the default price,
+	// let default custom/locked price take precedence cleanly.
+	if providerID == entry.DefaultChannelID {
+		if _, hasDefaultOverride := s.overrides.Default[entry.ModelID]; hasDefaultOverride {
+			return nil, false
 		}
 	}
 
-	// 3. 尝试模糊匹配（去掉版本号后缀）
-	// claude-opus-4-5-20251101 -> claude-opus-4.5
-	baseName := s.extractBaseName(lookupCandidates[0])
-	for key, pricing := range s.pricingData {
-		keyBase := s.extractBaseName(strings.ToLower(key))
-		if keyBase == baseName {
-			return pricing
+	// 3. Exact raw upstream model ID match inside this channel (e.g. Bedrock regional vs global!)
+	if rawLower != "" {
+		if rawMap := entry.rawByChannel[providerID]; rawMap != nil {
+			if cat, ok := rawMap[rawLower]; ok && cat != nil {
+				return cat, true
+			}
+		}
+	}
+	if rawMap := entry.rawByChannel[providerID]; rawMap != nil {
+		if cat, ok := rawMap[modelLower]; ok && cat != nil {
+			return cat, true
 		}
 	}
 
+	// 4. Canonical channel price entry for this provider
+	if ch := entry.channelByID[providerID]; ch != nil && ch.catalog != nil {
+		return ch.catalog, true
+	}
+
+	return nil, false
+}
+
+// GetModelPricing 获取模型默认渠道价格（全局自定义覆盖 > models.dev 默认渠道价）
+func (s *PricingService) GetModelPricing(modelName string) *CatalogModelPricing {
+	if s == nil || strings.TrimSpace(modelName) == "" {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	modelLower := strings.ToLower(strings.TrimSpace(modelName))
+	lookupCandidates := s.buildModelLookupCandidates(modelLower)
+
+	if pricing := s.lookupIdentifiedModelPricingLocked(lookupCandidates); pricing != nil {
+		return pricing
+	}
+	if pricing := s.matchByModelFamilyLocked(lookupCandidates[0]); pricing != nil {
+		return pricing
+	}
+	if strings.HasPrefix(lookupCandidates[0], "gpt-") {
+		return s.matchOpenAIModelLocked(lookupCandidates[0])
+	}
 	return nil
 }
 
 // GetIdentifiedModelPricing 在价格表中确定性地识别模型，识别不到时返回 nil。
-// 与 GetModelPricing 的区别：不会退化成按 "opus"/"haiku" 之类子串猜出的系列兜底价。
-// 用于必须区分"这是价格表里已知的模型"和"这只是名字里带某个关键词"的场景。
-func (s *PricingService) GetIdentifiedModelPricing(modelName string) *LiteLLMModelPricing {
+func (s *PricingService) GetIdentifiedModelPricing(modelName string) *CatalogModelPricing {
 	if s == nil {
 		return nil
 	}
@@ -1373,23 +2471,76 @@ func (s *PricingService) GetIdentifiedModelPricing(modelName string) *LiteLLMMod
 	return s.lookupIdentifiedModelPricingLocked(s.buildModelLookupCandidates(modelLower))
 }
 
+func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []string) *CatalogModelPricing {
+	if len(lookupCandidates) == 0 {
+		return nil
+	}
+
+	for _, candidate := range lookupCandidates {
+		if candidate == "" {
+			continue
+		}
+		if pricing, ok := s.effectiveDefaultData[candidate]; ok {
+			return pricing
+		}
+		if norm := NormalizeOriginalModelID(candidate); norm != "" && norm != candidate {
+			if pricing, ok := s.effectiveDefaultData[norm]; ok {
+				return pricing
+			}
+		}
+	}
+
+	for _, candidate := range lookupCandidates {
+		for _, variant := range []string{
+			strings.ReplaceAll(candidate, "-4-5-", "-4.5-"),
+			strings.ReplaceAll(candidate, "-4.5-", "-4-5-"),
+			strings.ReplaceAll(candidate, "-4-6", "-4.6"),
+			strings.ReplaceAll(candidate, "-4.6", "-4-6"),
+		} {
+			if pricing, ok := s.effectiveDefaultData[variant]; ok {
+				return pricing
+			}
+		}
+	}
+
+	baseName := s.extractBaseName(NormalizeOriginalModelID(lookupCandidates[0]))
+	if baseName != "" {
+		if pricing, ok := s.effectiveDefaultData[baseName]; ok {
+			return pricing
+		}
+		var matchedKey string
+		var matchedPricing *CatalogModelPricing
+		for key, pricing := range s.effectiveDefaultData {
+			if s.extractBaseName(strings.ToLower(key)) == baseName {
+				if matchedKey == "" || key < matchedKey {
+					matchedKey = key
+					matchedPricing = pricing
+				}
+			}
+		}
+		if matchedPricing != nil {
+			return matchedPricing
+		}
+	}
+
+	return nil
+}
+
 func (s *PricingService) buildModelLookupCandidates(modelLower string) []string {
+	origID := NormalizeOriginalModelID(modelLower)
 	rawCandidates := []string{
 		modelLower,
+		origID,
 		strings.TrimPrefix(modelLower, "models/"),
 		lastSegment(modelLower),
 		lastSegment(strings.TrimPrefix(modelLower, "models/")),
 	}
 	normalized := normalizeModelNameForPricing(modelLower)
 
-	// A tier-specific entry should take precedence when the pricing catalog gains
-	// one later. Antigravity's Gemini thinking tiers share the base rate,
-	// so the normalized base remains the fallback after the exact aliases.
 	candidates := rawCandidates
 	if isAntigravityThinkingTierAlias(lastSegment(modelLower)) {
 		candidates = append(candidates, normalized)
 	} else {
-		// Prefer canonical model names for all other aliases (including models/xxx).
 		candidates = append([]string{normalized}, candidates...)
 	}
 
@@ -1413,10 +2564,6 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 }
 
 func normalizeModelNameForPricing(model string) string {
-	// Common Gemini/VertexAI forms:
-	// - models/gemini-2.0-flash-exp
-	// - publishers/google/models/gemini-2.5-pro
-	// - projects/.../locations/.../publishers/google/models/gemini-2.5-pro
 	model = strings.TrimSpace(model)
 	model = strings.TrimLeft(model, "/")
 	model = strings.TrimPrefix(model, "models/")
@@ -1445,11 +2592,6 @@ func normalizeModelNameForPricing(model string) string {
 	return normalizeAntigravityClaudeTierAlias(normalizeGeminiThinkingTierAlias(model))
 }
 
-// normalizeAntigravityClaudeTierAlias maps Antigravity's Claude 5.5 thinking-tier
-// model IDs (claude-opus-5-5-high, claude-sonnet-5-5-low, ...) to the public base
-// model. Like the Gemini tiers, the suffix selects reasoning depth rather than a
-// separate token rate; without this the IDs fall into substring family matching
-// and are billed as claude-opus-5 / claude-sonnet-4-5.
 func normalizeAntigravityClaudeTierAlias(model string) string {
 	for _, baseModel := range []string{"claude-opus-5-5", "claude-sonnet-5-5"} {
 		for _, tier := range []string{"-high", "-low", "-medium"} {
@@ -1461,16 +2603,10 @@ func normalizeAntigravityClaudeTierAlias(model string) string {
 	return model
 }
 
-// isAntigravityThinkingTierAlias reports whether model is an Antigravity
-// Gemini or Claude thinking-tier alias of a priced base model.
 func isAntigravityThinkingTierAlias(model string) bool {
 	return normalizeGeminiThinkingTierAlias(model) != model || normalizeAntigravityClaudeTierAlias(model) != model
 }
 
-// normalizeGeminiThinkingTierAlias maps Antigravity's Gemini thinking-tier
-// model IDs to the public base model. The tier controls reasoning behavior, not
-// the published token rate, so this keeps -high/-low/-medium and -tiered
-// requests on the corresponding base model's price card.
 func normalizeGeminiThinkingTierAlias(model string) string {
 	for _, baseModel := range []string{"gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon"} {
 		for _, tier := range []string{"-high", "-low", "-medium", "-tiered"} {
@@ -1489,17 +2625,13 @@ func lastSegment(model string) string {
 	return model
 }
 
-// extractBaseName 提取基础模型名称（去掉日期版本号）
 func (s *PricingService) extractBaseName(model string) string {
-	// 移除日期后缀 (如 -20251101, -20241022)
 	parts := strings.Split(model, "-")
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
-		// 跳过看起来像日期的部分（8位数字）
 		if len(part) == 8 && isNumeric(part) {
 			continue
 		}
-		// 跳过版本号（如 v1:0）
 		if strings.Contains(part, ":") {
 			continue
 		}
@@ -1508,68 +2640,53 @@ func (s *PricingService) extractBaseName(model string) string {
 	return strings.Join(result, "-")
 }
 
-// matchByModelFamily 基于模型系列匹配
-func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
+func (s *PricingService) matchByModelFamilyLocked(model string) *CatalogModelPricing {
 	model = normalizeAntigravityClaudeTierAlias(model)
-	var claude52Model string
 	switch {
 	case claude.IsFable52(model):
-		claude52Model = "claude-fable-5-2"
+		if pricing, ok := s.effectiveDefaultData["claude-fable-5-2"]; ok {
+			return pricing
+		}
 	case claude.IsMythos52(model):
-		claude52Model = "claude-mythos-5-2"
-	}
-	if claude52Model != "" {
-		if pricing, ok := s.pricingData[claude52Model]; ok {
+		if pricing, ok := s.effectiveDefaultData["claude-mythos-5-2"]; ok {
 			return pricing
 		}
-		return claude52FallbackPricing
-	}
-	if claude.IsOpus55(model) {
-		if pricing, ok := s.pricingData["claude-opus-5-5"]; ok {
+	case claude.IsOpus55(model):
+		if pricing, ok := s.effectiveDefaultData["claude-opus-5-5"]; ok {
 			return pricing
 		}
-		return claudeOpus55FallbackPricing
-	}
-	if claude.IsSonnet55(model) {
-		if pricing, ok := s.pricingData["claude-sonnet-5-5"]; ok {
+	case claude.IsSonnet55(model):
+		if pricing, ok := s.effectiveDefaultData["claude-sonnet-5-5"]; ok {
 			return pricing
 		}
-		return claudeSonnet55FallbackPricing
-	}
-	if claude.IsHaiku55(model) {
-		if pricing, ok := s.pricingData["claude-haiku-5-5"]; ok {
+	case claude.IsHaiku55(model):
+		if pricing, ok := s.effectiveDefaultData["claude-haiku-5-5"]; ok {
 			return pricing
 		}
-		return claudeHaiku55FallbackPricing
-	}
-	// modelFamily 定义一个模型系列的匹配和定价查找规则。
-	type modelFamily struct {
-		name    string   // 系列名称
-		match   []string // 用于将模型归类到此系列的模式（strings.Contains 匹配）
-		pricing []string // 用于在定价数据中查找价格的模式（nil 则复用 match；可包含低版本 fallback）
 	}
 
-	// 按特异性降序排列：高版本号在前，避免 "claude-opus-4"（opus-4 系列）
-	// 因子串关系误匹配 "claude-opus-4-7"（opus-4.7 系列）。
-	// 注意：原 map 实现存在 Go map 迭代随机性导致的同类 bug，此处改为有序切片修复。
+	type modelFamily struct {
+		name    string
+		match   []string
+		pricing []string
+	}
 	families := []modelFamily{
-		// Opus 5 与 Opus 4.8 同价（$5/$25 per MTok）。定价数据缺失 claude-opus-5 时
-		// 必须回退到 4.8，否则会掉进 "opus-4" 系列按 $15/$75 计费（3 倍超收）。
 		{name: "opus-5", match: []string{"claude-opus-5"}, pricing: []string{"claude-opus-5", "claude-opus-4-8"}},
 		{name: "opus-4.8", match: []string{"claude-opus-4-8", "claude-opus-4.8"}, pricing: []string{"claude-opus-4-8", "claude-opus-4.8", "claude-opus-4-7"}},
 		{name: "opus-4.7", match: []string{"claude-opus-4-7", "claude-opus-4.7"}, pricing: []string{"claude-opus-4-7", "claude-opus-4.7", "claude-opus-4-6"}},
 		{name: "opus-4.6", match: []string{"claude-opus-4-6", "claude-opus-4.6"}},
 		{name: "opus-4.5", match: []string{"claude-opus-4-5", "claude-opus-4.5"}},
 		{name: "opus-4", match: []string{"claude-opus-4", "claude-3-opus"}},
+		{name: "sonnet-4.6", match: []string{"claude-sonnet-4-6", "claude-sonnet-4.6"}},
 		{name: "sonnet-4.5", match: []string{"claude-sonnet-4-5", "claude-sonnet-4.5"}},
 		{name: "sonnet-4", match: []string{"claude-sonnet-4", "claude-3-5-sonnet"}},
 		{name: "sonnet-3.5", match: []string{"claude-3-5-sonnet", "claude-3.5-sonnet"}},
 		{name: "sonnet-3", match: []string{"claude-3-sonnet"}},
+		{name: "haiku-4.5", match: []string{"claude-haiku-4-5", "claude-haiku-4.5"}},
 		{name: "haiku-3.5", match: []string{"claude-3-5-haiku", "claude-3.5-haiku"}},
 		{name: "haiku-3", match: []string{"claude-3-haiku"}},
 	}
 
-	// Phase 1: 按有序切片归类（最具体的系列优先匹配）
 	var matched *modelFamily
 	for i := range families {
 		for _, pattern := range families[i].match {
@@ -1582,133 +2699,63 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 			break
 		}
 	}
-
-	// Phase 2: 二次兜底——当模型 ID 不含已知模式串时，按关键字粗分
-	if matched == nil {
-		var fallbackName string
-		switch {
-		case strings.Contains(model, "opus"):
-			switch {
-			// "opus-5" 必须先判：不能用裸 "5" 匹配，否则 claude-opus-4-5 会被误判。
-			case strings.Contains(model, "opus-5") || strings.Contains(model, "opus5"):
-				fallbackName = "opus-5"
-			case strings.Contains(model, "4.8") || strings.Contains(model, "4-8"):
-				fallbackName = "opus-4.8"
-			case strings.Contains(model, "4.7") || strings.Contains(model, "4-7"):
-				fallbackName = "opus-4.7"
-			case strings.Contains(model, "4.6") || strings.Contains(model, "4-6"):
-				fallbackName = "opus-4.6"
-			case strings.Contains(model, "4.5") || strings.Contains(model, "4-5"):
-				fallbackName = "opus-4.5"
-			default:
-				fallbackName = "opus-4"
-			}
-		case strings.Contains(model, "sonnet"):
-			switch {
-			case strings.Contains(model, "4.5") || strings.Contains(model, "4-5"):
-				fallbackName = "sonnet-4.5"
-			case strings.Contains(model, "3-5") || strings.Contains(model, "3.5"):
-				fallbackName = "sonnet-3.5"
-			default:
-				fallbackName = "sonnet-4"
-			}
-		case strings.Contains(model, "haiku"):
-			switch {
-			case strings.Contains(model, "3-5") || strings.Contains(model, "3.5"):
-				fallbackName = "haiku-3.5"
-			default:
-				fallbackName = "haiku-3"
-			}
-		}
-		if fallbackName != "" {
-			for i := range families {
-				if families[i].name == fallbackName {
-					matched = &families[i]
-					break
-				}
-			}
-		}
-	}
-
 	if matched == nil {
 		return nil
 	}
 
-	// Phase 3: 在定价数据中查找该系列的价格
 	lookups := matched.pricing
 	if lookups == nil {
 		lookups = matched.match
 	}
+	keys := make([]string, 0, len(s.effectiveDefaultData))
+	for k := range s.effectiveDefaultData {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	for _, pattern := range lookups {
-		for key, pricing := range s.pricingData {
+		for _, key := range keys {
 			keyLower := strings.ToLower(key)
 			if matched.name == "opus-5" && claude.IsOpus55(keyLower) {
 				continue
 			}
 			if strings.Contains(keyLower, pattern) {
-				logger.LegacyPrintf("service.pricing", "[Pricing] Fuzzy matched %s -> %s", model, key)
-				return pricing
+				return s.effectiveDefaultData[key]
 			}
 		}
 	}
-
 	return nil
 }
 
-// matchOpenAIModel OpenAI 模型回退匹配策略
-// 回退顺序：
-// 1. gpt-5.3-codex-spark* -> gpt-5.1-codex（按业务要求固定计费）
-// 2. gpt-5.2-codex -> gpt-5.2（去掉后缀如 -codex, -mini, -max 等）
-// 3. gpt-5.2-20251222 -> gpt-5.2（去掉日期版本号）
-// 4. gpt-5.3-codex -> gpt-5.2-codex
-// 5. gpt-5.4* -> 业务静态兜底价
-// 6. 最终回退到 DefaultTestModel (gpt-5.1-codex)
-func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
+func (s *PricingService) matchOpenAIModelLocked(model string) *CatalogModelPricing {
 	if strings.HasPrefix(model, "gpt-5.3-codex-spark") {
-		if pricing, ok := s.pricingData["gpt-5.1-codex"]; ok {
-			logger.LegacyPrintf("service.pricing", "[Pricing][SparkBilling] %s -> %s billing", model, "gpt-5.1-codex")
-			logger.With(zap.String("component", "service.pricing")).
-				Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.1-codex"))
+		if pricing, ok := s.effectiveDefaultData["gpt-5.1-codex"]; ok {
 			return pricing
 		}
 	}
-
 	if openai.IsGPT61TerraModelSpelling(model) {
-		if pricing, ok := s.pricingData["gpt-6.1-terra"]; ok {
+		if pricing, ok := s.effectiveDefaultData["gpt-6.1-terra"]; ok {
 			return pricing
 		}
-		return openAIGPT61TerraFallbackPricing
 	}
 	if base := openai.GPT62ModelID(model); base != "" {
-		if pricing, ok := s.pricingData[base]; ok {
+		if pricing, ok := s.effectiveDefaultData[base]; ok {
 			return pricing
 		}
-		if base == "gpt-6.2-sol" {
-			return openAIGPT61SolFallbackPricing // Same published token rates.
-		}
-		return openAIGPT62AstraFallbackPricing
 	}
 	if openai.IsGPT61SolModelSpelling(model) {
-		if pricing, ok := s.pricingData["gpt-6.1-sol"]; ok {
+		if pricing, ok := s.effectiveDefaultData["gpt-6.1-sol"]; ok {
 			return pricing
 		}
-		return openAIGPT61SolFallbackPricing
 	}
 	if openai.IsGPT6SolOrLunaModelSpelling(model) {
-		if pricing, ok := s.pricingData[normalizeKnownOpenAICodexModel(model)]; ok {
+		if pricing, ok := s.effectiveDefaultData[normalizeKnownOpenAICodexModel(model)]; ok {
 			return pricing
 		}
-		if strings.HasPrefix(model, "gpt-6-sol") {
-			return openAIGPT6SolFallbackPricing
-		}
-		return openAIGPT6LunaFallbackPricing
 	}
 
-	// 尝试的回退变体
 	variants := s.generateOpenAIModelVariants(model, openAIModelDatePattern)
-
 	for _, variant := range variants {
-		if pricing, ok := s.pricingData[variant]; ok {
+		if pricing, ok := s.effectiveDefaultData[variant]; ok {
 			logger.With(zap.String("component", "service.pricing")).
 				Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, variant))
 			return pricing
@@ -1716,91 +2763,27 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 	}
 
 	if strings.HasPrefix(model, "gpt-5.3-codex") {
-		if pricing, ok := s.pricingData["gpt-5.2-codex"]; ok {
-			logger.With(zap.String("component", "service.pricing")).
-				Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.2-codex"))
+		if pricing, ok := s.effectiveDefaultData["gpt-5.2-codex"]; ok {
 			return pricing
 		}
 	}
 
-	if isOpenAIGPT6AstraModel(model) {
-		logger.With(zap.String("component", "service.pricing")).
-			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-6-astra(static)"))
-		return openAIGPT6AstraFallbackPricing
-	}
-
-	if strings.HasPrefix(model, "gpt-5.6-sol") {
-		logger.With(zap.String("component", "service.pricing")).
-			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.6-sol(static)"))
-		return openAIGPT56SolFallbackPricing
-	}
-	if strings.HasPrefix(model, "gpt-5.6-terra") {
-		logger.With(zap.String("component", "service.pricing")).
-			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.6-terra(static)"))
-		return openAIGPT56TerraFallbackPricing
-	}
-	if strings.HasPrefix(model, "gpt-5.6-luna") {
-		logger.With(zap.String("component", "service.pricing")).
-			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.6-luna(static)"))
-		return openAIGPT56LunaFallbackPricing
-	}
-
-	// GPT-5.5 回退到 GPT-5.4 定价
-	if strings.HasPrefix(model, "gpt-5.5") {
-		logger.With(zap.String("component", "service.pricing")).
-			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.4(static)"))
-		return openAIGPT54FallbackPricing
-	}
-
-	if strings.HasPrefix(model, "gpt-5.4-mini") {
-		logger.With(zap.String("component", "service.pricing")).
-			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.4-mini(static)"))
-		return openAIGPT54MiniFallbackPricing
-	}
-
-	if strings.HasPrefix(model, "gpt-5.4-nano") {
-		logger.With(zap.String("component", "service.pricing")).
-			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.4-nano(static)"))
-		return openAIGPT54NanoFallbackPricing
-	}
-
-	if strings.HasPrefix(model, "gpt-5.4") {
-		logger.With(zap.String("component", "service.pricing")).
-			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.4(static)"))
-		return openAIGPT54FallbackPricing
-	}
-
-	// Remote price mirrors can lag new releases. Never bill GPT Image 2.5 / 2.6
-	// using the older image model's rates when its entry is absent.
-	if model == "gpt-image-2.6-flare" || model == "gpt-image-2.6-sunburst" {
-		return openAIGPTImage25FallbackPricing
-	}
-	for _, imageModel := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
-		if model == imageModel || model == imageModel+"-2026-09-08" {
-			return openAIGPTImage25FallbackPricing
-		}
-	}
 	if isOpenAIImageGenerationModel(model) {
 		for _, candidate := range []string{"gpt-image-2", "gpt-image-1.5", "gpt-image-1"} {
-			if pricing, ok := s.pricingData[candidate]; ok {
-				logger.LegacyPrintf("service.pricing", "[Pricing] OpenAI image fallback matched %s -> %s", model, candidate)
+			if pricing, ok := s.effectiveDefaultData[candidate]; ok {
 				return pricing
 			}
 		}
 		return nil
 	}
 
-	// 最终回退到 DefaultTestModel
 	defaultModel := strings.ToLower(openai.DefaultTestModel)
-	if pricing, ok := s.pricingData[defaultModel]; ok {
-		logger.LegacyPrintf("service.pricing", "[Pricing] OpenAI fallback to default model %s -> %s", model, defaultModel)
+	if pricing, ok := s.effectiveDefaultData[defaultModel]; ok {
 		return pricing
 	}
-
 	return nil
 }
 
-// generateOpenAIModelVariants 生成 OpenAI 模型的回退变体列表
 func (s *PricingService) generateOpenAIModelVariants(model string, datePattern *regexp.Regexp) []string {
 	seen := make(map[string]bool)
 	var variants []string
@@ -1812,74 +2795,53 @@ func (s *PricingService) generateOpenAIModelVariants(model string, datePattern *
 		}
 	}
 
-	// 1. 去掉日期版本号: gpt-5.2-20251222 -> gpt-5.2
 	withoutDate := datePattern.ReplaceAllString(model, "")
 	if withoutDate != model {
 		addVariant(withoutDate)
 	}
-
-	// 2. 提取基础版本号: gpt-5.2-codex -> gpt-5.2
-	// 只匹配纯数字版本号格式 gpt-X 或 gpt-X.Y，不匹配 gpt-4o 这种带字母后缀的
 	if matches := openAIModelBasePattern.FindStringSubmatch(model); len(matches) > 1 {
 		addVariant(matches[1])
 	}
-
-	// 3. 同时去掉日期后再提取基础版本号
 	if withoutDate != model {
 		if matches := openAIModelBasePattern.FindStringSubmatch(withoutDate); len(matches) > 1 {
 			addVariant(matches[1])
 		}
 	}
-
 	return variants
 }
 
-// GetStatus 获取服务状态
-func (s *PricingService) GetStatus() map[string]any {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return map[string]any{
-		"model_count":  len(s.pricingData),
-		"last_updated": s.lastUpdated,
-		"local_hash":   s.localHash[:min(8, len(s.localHash))],
-	}
-}
-
-// ForceUpdate 强制更新
-func (s *PricingService) ForceUpdate() error {
-	return s.downloadPricingData()
-}
-
-// getPricingFilePath 获取价格文件路径
-func (s *PricingService) getPricingFilePath() string {
-	return filepath.Join(s.cfg.Pricing.DataDir, "model_pricing.json")
-}
-
-// getHashFilePath 获取哈希文件路径
-func (s *PricingService) getHashFilePath() string {
-	return filepath.Join(s.cfg.Pricing.DataDir, "model_pricing.sha256")
-}
-
-// ListModelNamesByProvider returns all model names in the catalog whose
-// LiteLLMProvider matches the given provider string (case-insensitive).
-// The returned slice is sorted alphabetically.
+// ListModelNamesByProvider returns all normalized original model IDs in the supported models.dev cache
+// belonging to the given provider ID (case-insensitive, sorted alphabetically).
 func (s *PricingService) ListModelNamesByProvider(provider string) []string {
+	if s == nil {
+		return []string{}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	names := make([]string, 0)
-	for name, p := range s.pricingData {
-		if strings.ToLower(p.LiteLLMProvider) == provider {
-			names = append(names, name)
+	if models, ok := s.providerModels[provider]; ok {
+		out := make([]string, len(models))
+		copy(out, models)
+		return out
+	}
+
+	aliasMap := map[string]string{
+		"gemini":   "google",
+		"moonshot": "moonshotai",
+		"zhipu":    "zhipuai",
+	}
+	if alias, ok := aliasMap[provider]; ok {
+		if models, exists := s.providerModels[alias]; exists {
+			out := make([]string, len(models))
+			copy(out, models)
+			return out
 		}
 	}
-	sort.Strings(names)
-	return names
+
+	return []string{}
 }
 
-// isNumeric 检查字符串是否为纯数字
 func isNumeric(s string) bool {
 	for _, c := range s {
 		if c < '0' || c > '9' {

@@ -200,7 +200,7 @@ func TestGatewayServiceRecordUsage_GeminiFlashThinkingTierUsesCatalogPrice(t *te
 			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 			userRepo := &openAIRecordUsageUserRepoStub{}
 			svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
-			svc.billingService = NewBillingService(svc.cfg, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+			svc.billingService = NewBillingService(svc.cfg, &PricingService{effectiveDefaultData: map[string]*CatalogModelPricing{
 				baseModel: {InputCostPerToken: 0.75e-6, OutputCostPerToken: 3.75e-6, CacheReadInputTokenCost: 0.075e-6},
 			}})
 			svc.resolver = NewModelPricingResolver(nil, svc.billingService)

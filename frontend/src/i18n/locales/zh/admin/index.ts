@@ -1,5 +1,6 @@
 import overview from './overview'
 import channels from './channels'
+import modelPricing from './modelPricing'
 import accounts from './accounts'
 import resources from './resources'
 import ops from './ops'
@@ -11,6 +12,7 @@ import plugins from './plugins'
 export default {
   ...overview,
   ...channels,
+  ...modelPricing,
   ...accounts,
   ...resources,
   ...ops,

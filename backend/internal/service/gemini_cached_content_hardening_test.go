@@ -17,20 +17,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const geminiCacheHardeningPricing = `{
-	"gemini-3.8-flash":{"litellm_provider":"gemini","input_cost_per_token":0.00000075,"output_cost_per_token":0.00000375,
-		"cache_storage_cost_per_token_per_hour":0.0000005},
-	"gemini-2.5-pro":{"litellm_provider":"gemini","input_cost_per_token":0.00000125,"output_cost_per_token":0.00001,
-		"cache_storage_cost_per_token_per_hour":0.0000045}}`
-
 func newGeminiCacheBillingGatewayForTest(t *testing.T) (*GatewayService, *openAIRecordUsageLogRepoStub) {
 	t.Helper()
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
-	pricing := &PricingService{}
-	data, err := pricing.parsePricingData([]byte(geminiCacheHardeningPricing))
-	require.NoError(t, err)
-	pricing.pricingData = data
+	pricing := newStubPricingServiceFromCatalogMap(map[string]*CatalogModelPricing{
+		"gemini-3.8-flash": {
+			Provider: "google", InputCostPerToken: 0.00000075, OutputCostPerToken: 0.00000375,
+			CacheStorageCostPerTokenPerHour: 0.0000005,
+		},
+		"gemini-2.5-pro": {
+			Provider: "google", InputCostPerToken: 0.00000125, OutputCostPerToken: 0.00001,
+			CacheStorageCostPerTokenPerHour: 0.0000045,
+		},
+	})
 	svc.billingService = NewBillingService(svc.cfg, pricing)
 	return svc, usageRepo
 }

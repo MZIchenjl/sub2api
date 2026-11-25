@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -14,121 +12,166 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// blockingHashRemoteClient 的 FetchHashText 一直阻塞到 release 关闭，模拟远端不可达时等满超时。
-type blockingHashRemoteClient struct {
+const testStartupModelsDevJSON = `{
+	"anthropic": {
+		"id": "anthropic",
+		"name": "Anthropic",
+		"models": {
+			"claude-opus-5": {
+				"id": "claude-opus-5",
+				"name": "Claude Opus 5",
+				"cost": {"input": 5, "output": 25, "cache_read": 0.5, "cache_write": 6.25}
+			}
+		}
+	}
+}`
+
+type blockingModelsDevClient struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
-func (c *blockingHashRemoteClient) FetchPricingJSON(context.Context, string) ([]byte, error) {
-	return nil, context.DeadlineExceeded
-}
-
-func (c *blockingHashRemoteClient) FetchHashText(context.Context, string) (string, error) {
+func (c *blockingModelsDevClient) FetchPricingJSON(ctx context.Context, _ string) ([]byte, error) {
 	c.once.Do(func() { close(c.started) })
-	<-c.release
-	return "", context.DeadlineExceeded
+	select {
+	case <-c.release:
+		return nil, context.DeadlineExceeded
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
-// failingHashRemoteClient 的哈希请求立即失败，下载请求只计数。
-type failingHashRemoteClient struct {
-	mu        sync.Mutex
-	hashCalls int
-	downloads int
+type stubModelsDevClient struct {
+	mu    sync.Mutex
+	body  []byte
+	err   error
+	calls int
 }
 
-func (c *failingHashRemoteClient) FetchPricingJSON(context.Context, string) ([]byte, error) {
+func (c *stubModelsDevClient) FetchPricingJSON(_ context.Context, _ string) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.downloads++
-	return nil, errors.New("unexpected download")
+	c.calls++
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.body, nil
 }
 
-func (c *failingHashRemoteClient) FetchHashText(context.Context, string) (string, error) {
+func (c *stubModelsDevClient) callCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.hashCalls++
-	return "", errors.New("hash endpoint unreachable")
+	return c.calls
 }
 
-func (c *failingHashRemoteClient) counts() (hashCalls, downloads int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.hashCalls, c.downloads
-}
-
-func newStartupPricingService(t *testing.T, remote PricingRemoteClient) *PricingService {
-	t.Helper()
-	svc := NewPricingService(&config.Config{Pricing: config.PricingConfig{
-		DataDir:   t.TempDir(),
-		RemoteURL: "https://example.com/pricing.json",
-		HashURL:   "https://example.com/pricing.sha256",
-	}}, remote)
-	require.NoError(t, os.WriteFile(svc.getPricingFilePath(), []byte(hotReloadCatalogJSON), 0644))
-	return svc
-}
-
-// 本地价格文件已在时，启动检查不得等远端哈希：远端不可达也要立即返回，价格表已可用。
-func TestPricingStartupDoesNotWaitForRemoteHash(t *testing.T) {
-	remote := &blockingHashRemoteClient{started: make(chan struct{}), release: make(chan struct{})}
+// 本地缓存存在且已过期时，启动不得阻塞在远程 models.dev 拉取上，本地缓存启动即可用。
+func TestPricingStartupDoesNotBlockOnRemoteModelsDevSync(t *testing.T) {
+	remote := &blockingModelsDevClient{started: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { close(remote.release) })
-	svc := newStartupPricingService(t, remote)
+
+	dir := t.TempDir()
+	svc := NewPricingService(&config.Config{
+		Pricing: config.PricingConfig{
+			DataDir:           dir,
+			ModelsDevURL:      "https://models.dev/api.json",
+			AutoSyncEnabled:   true,
+			SyncIntervalHours: 1,
+		},
+	}, remote)
+
+	cachePath := svc.getCatalogCachePath()
+	require.NoError(t, os.WriteFile(cachePath, []byte(testStartupModelsDevJSON), 0644))
+	// Make cache stale so background refresh triggers
+	oldTime := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, os.Chtimes(cachePath, oldTime, oldTime))
 
 	done := make(chan error, 1)
-	go func() { done <- svc.checkAndUpdatePricing() }()
+	go func() { done <- svc.Initialize() }()
+	t.Cleanup(func() { svc.Stop() })
 
 	select {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
-		t.Fatal("startup must not block on the remote hash fetch")
+		t.Fatal("startup must not block on remote models.dev sync")
 	}
-	require.NotNil(t, svc.GetModelPricing("remote-model"), "本地价格表启动即可用")
+
+	p := svc.GetModelPricing("claude-opus-5")
+	require.NotNil(t, p)
+	require.InDelta(t, 5e-6, p.InputCostPerToken, 1e-12)
+
 	select {
 	case <-remote.started:
 	case <-time.After(2 * time.Second):
-		t.Fatal("remote hash check must still run in the background")
+		t.Fatal("stale cache must trigger background models.dev sync")
 	}
 }
 
-// 后台哈希校验发现远端哈希不同时，仍要下载并替换价格表。
-func TestPricingStartupBackgroundCheckDownloadsWhenHashDiffers(t *testing.T) {
-	newBody := `{` + hotReloadModelJSON("remote-model", 3e-6, 6e-6) + `}`
-	newHash := fmt.Sprintf("%x", sha256.Sum256([]byte(newBody)))
-	remote := &stubPricingRemoteClient{body: newBody, hash: newHash}
-	svc := newStartupPricingService(t, remote)
+// 后台同步成功后更新内存和本地磁盘缓存。
+func TestPricingStartupBackgroundSyncUpdatesCache(t *testing.T) {
+	updatedJSON := `{
+		"anthropic": {
+			"id": "anthropic",
+			"name": "Anthropic",
+			"models": {
+				"claude-opus-5": {
+					"id": "claude-opus-5",
+					"name": "Claude Opus 5",
+					"cost": {"input": 4, "output": 20, "cache_read": 0.4, "cache_write": 5}
+				}
+			}
+		}
+	}`
+	remote := &stubModelsDevClient{body: []byte(updatedJSON)}
+	dir := t.TempDir()
+	svc := NewPricingService(&config.Config{
+		Pricing: config.PricingConfig{
+			DataDir:           dir,
+			ModelsDevURL:      "https://models.dev/api.json",
+			AutoSyncEnabled:   true,
+			SyncIntervalHours: 24,
+		},
+	}, remote)
 
-	require.NoError(t, svc.checkAndUpdatePricing())
+	require.NoError(t, svc.Initialize())
+	t.Cleanup(func() { svc.Stop() })
 
 	require.Eventually(t, func() bool {
-		p := svc.GetModelPricing("remote-model")
-		return p != nil && p.InputCostPerToken == 3e-6
-	}, 2*time.Second, 10*time.Millisecond, "后台校验应下载并替换价格表")
-	svc.mu.RLock()
-	require.Equal(t, newHash, svc.localHash)
-	svc.mu.RUnlock()
-	saved, err := os.ReadFile(svc.getPricingFilePath())
+		p := svc.GetModelPricing("claude-opus-5")
+		return p != nil && p.InputCostPerToken == 4e-6
+	}, 2*time.Second, 10*time.Millisecond)
+
+	saved, err := os.ReadFile(svc.getCatalogCachePath())
 	require.NoError(t, err)
-	require.Equal(t, newBody, string(saved))
+	require.JSONEq(t, updatedJSON, string(saved))
 }
 
-// 后台哈希获取失败时沿用已加载的本地价格表，只记日志，不触发下载。
-func TestPricingStartupBackgroundCheckKeepsLocalDataWhenHashFetchFails(t *testing.T) {
-	logs, restore := captureStructuredLog(t)
-	defer restore()
-	remote := &failingHashRemoteClient{}
-	svc := newStartupPricingService(t, remote)
+// 同步失败时保留已有本地缓存并记录错误状态。
+func TestPricingSyncFailureKeepsExistingCache(t *testing.T) {
+	remote := &stubModelsDevClient{err: errors.New("network unreachable")}
+	dir := t.TempDir()
+	svc := NewPricingService(&config.Config{
+		Pricing: config.PricingConfig{
+			DataDir:           dir,
+			ModelsDevURL:      "https://models.dev/api.json",
+			AutoSyncEnabled:   false,
+			SyncIntervalHours: 24,
+		},
+	}, remote)
 
-	require.NoError(t, svc.checkAndUpdatePricing())
+	require.NoError(t, os.WriteFile(svc.getCatalogCachePath(), []byte(testStartupModelsDevJSON), 0644))
+	require.NoError(t, svc.Initialize())
+	t.Cleanup(func() { svc.Stop() })
 
-	require.Eventually(t, func() bool {
-		return logs.ContainsMessage("Failed to fetch remote hash on startup: hash endpoint unreachable")
-	}, 2*time.Second, 10*time.Millisecond, "哈希获取失败应记日志")
-	hashCalls, downloads := remote.counts()
-	require.Equal(t, 1, hashCalls)
-	require.Zero(t, downloads)
-	p := svc.GetModelPricing("remote-model")
+	status, err := svc.SyncNow(context.Background())
+	require.Error(t, err)
+	require.NotNil(t, status)
+	require.Equal(t, PricingSyncStatusFailed, status.Meta.LastSyncStatus)
+	require.Contains(t, status.Meta.LastSyncError, "network unreachable")
+
+	// Cached data remains available
+	p := svc.GetModelPricing("claude-opus-5")
 	require.NotNil(t, p)
-	require.InDelta(t, 1e-6, p.InputCostPerToken, 1e-12)
+	require.InDelta(t, 5e-6, p.InputCostPerToken, 1e-12)
 }

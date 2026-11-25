@@ -24,7 +24,7 @@ const (
 // 按 $15/$75 计费 —— 输入与输出双双 3 倍超收。
 func TestClaudeOpus5_FamilyFallbackDoesNotUseOpus4Rates(t *testing.T) {
 	svc := NewBillingService(&config.Config{}, &PricingService{
-		pricingData: map[string]*LiteLLMModelPricing{
+		effectiveDefaultData: map[string]*CatalogModelPricing{
 			// 有 4.8（同价），故意不放 claude-opus-5
 			"claude-opus-4-8": {
 				InputCostPerToken:           opus5InputPricePerToken,
