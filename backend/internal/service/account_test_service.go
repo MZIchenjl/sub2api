@@ -621,7 +621,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverrides(req.Context(), req.Header)
 
 	// Get proxy URL
 	proxyURL := ""
@@ -978,7 +978,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	applyKimiOAuthHeaders(req, credentialAccount)
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
-	credentialAccount.ApplyHeaderOverrides(req.Header)
+	credentialAccount.ApplyHeaderOverrides(req.Context(), req.Header)
 
 	// Get proxy URL
 	proxyURL := ""
@@ -1185,7 +1185,7 @@ func (s *AccountTestService) applyGrokTestRequestHeaders(req *http.Request, acco
 	if account.IsGrokOAuth() && req.URL != nil && isGrokCLIProxyTarget(req.URL.String()) {
 		applyGrokCLIHeaders(req.Header)
 	}
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverrides(req.Context(), req.Header)
 }
 
 func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, account *Account, resp *http.Response) {
@@ -1822,7 +1822,7 @@ func (s *AccountTestService) testGrokSTT(c *gin.Context, ctx context.Context, ac
 	if account.IsGrokOAuth() {
 		applyGrokCLIHeaders(req.Header)
 	}
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverrides(req.Context(), req.Header)
 
 	resp, err := s.httpUpstream.Do(req, s.grokTestProxyURL(account), account.ID, account.Concurrency)
 	if err != nil {
@@ -1895,7 +1895,7 @@ func (s *AccountTestService) testGrokRealtime(c *gin.Context, ctx context.Contex
 	if account.IsGrokOAuth() {
 		applyGrokCLIHeaders(headers)
 	}
-	account.ApplyHeaderOverrides(headers)
+	account.ApplyHeaderOverrides(ctx, headers)
 
 	dialer := s.grokWSDialer
 	if dialer == nil {
@@ -2187,7 +2187,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	applyKimiOAuthHeaders(req, account)
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverrides(req.Context(), req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 
 	proxyURL := ""
@@ -2321,7 +2321,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverrides(req.Context(), req.Header)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -3168,7 +3168,7 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	req.Header.Set("Authorization", "Bearer "+authToken)
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverrides(req.Context(), req.Header)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
