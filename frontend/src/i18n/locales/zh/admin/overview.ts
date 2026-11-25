@@ -979,6 +979,8 @@ export default {
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
+        devin: 'Devin',
+        meta: 'Meta Muse',
         composite: 'Composite',
       },
       saving: '保存中...',
@@ -1127,6 +1129,13 @@ export default {
         pricePerCallHint:
           '留空使用默认价 $0.01/次（官方定价 $10/1000 次）；填 0 表示免费。实际扣费会叠加分组费率倍数。',
         finalPricePreview: '应用当前倍率后的单次价格：{price}'
+      },
+      deepseekWebSearch: {
+        title: 'DeepSeek 官方联网搜索',
+        hint: '覆盖渠道级的 DeepSeek 官方免费服务端联网搜索开关（优先级：账号 > 分组 > 渠道 > 默认关闭；仅对直连 api.deepseek.com 生效）。',
+        default: '默认（跟随渠道）',
+        enabled: '开启',
+        disabled: '关闭'
       },
       peakRate: {
         enable: '启用高峰倍率',

@@ -1052,6 +1052,8 @@ export default {
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
+        devin: 'Devin',
+        meta: 'Meta Muse',
         composite: 'Composite',
       },
       deleteConfirm:
@@ -1130,6 +1132,13 @@ export default {
         pricePerCallHint:
           'Leave empty to use the default $0.01 per call (official pricing: $10 per 1,000 calls); 0 means free. The group rate multiplier is applied on top.',
         finalPricePreview: 'Per-call price after current multiplier: {price}'
+      },
+      deepseekWebSearch: {
+        title: 'DeepSeek Official Web Search',
+        hint: 'Overrides the channel-level DeepSeek official free server-side web search toggle (precedence: account > group > channel > default off; applies only when targeting official api.deepseek.com).',
+        default: 'Default (Channel)',
+        enabled: 'Enabled',
+        disabled: 'Disabled'
       },
       peakRate: {
         enable: 'Enable peak rate multiplier',

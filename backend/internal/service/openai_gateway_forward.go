@@ -1401,8 +1401,20 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	var targetURL string
 	switch account.Type {
 	case AccountTypeOAuth:
-		// OAuth accounts use ChatGPT internal API
-		targetURL = chatgptCodexURL
+		if account.IsKimiOAuth() {
+			baseURL := account.GetOpenAIBaseURL()
+			if account.UsesNativeCNResponses() && account.IsAdaptiveAPIProtocol() {
+				baseURL = account.GetCNProtocolBaseURL(APIProtocolResponses)
+			}
+			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
+			if err != nil {
+				return nil, err
+			}
+			targetURL = buildOpenAIResponsesURLForPlatform(account.Platform, validatedURL)
+		} else {
+			// OAuth accounts use ChatGPT internal API
+			targetURL = chatgptCodexURL
+		}
 	case AccountTypeSetupToken:
 		if account.IsOpenAIOAuthLike() {
 			targetURL = chatgptCodexURL
@@ -1432,6 +1444,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	if s.isDeepSeekOfficialWebSearchEnabled(ctx, c, account, targetURL) {
+		body = adaptDeepSeekResponsesWebSearchTools(body, gjson.GetBytes(body, "model").String())
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -1459,6 +1474,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 			return nil, fmt.Errorf("resolve chatgpt account headers: %w", err)
 		}
 	}
+	applyKimiOAuthHeaders(req, account)
 
 	// Whitelist passthrough headers
 	for key, values := range c.Request.Header {

@@ -445,6 +445,8 @@ export function getPlatformTagClass(platform: string): string {
     case 'kimi': return 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400'
     case 'zhipu': return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
     case 'deepseek': return 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
+    case 'devin': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+    case 'meta': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
     default: return 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
   }
 }
@@ -460,6 +462,8 @@ export function getPlatformTextClass(platform: string): string {
     case 'kimi': return 'text-pink-700 dark:text-pink-400'
     case 'zhipu': return 'text-indigo-700 dark:text-indigo-400'
     case 'deepseek': return 'text-teal-700 dark:text-teal-400'
+    case 'devin': return 'text-emerald-700 dark:text-emerald-400'
+    case 'meta': return 'text-blue-700 dark:text-blue-400'
     default: return ''
   }
 }

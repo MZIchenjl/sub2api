@@ -470,6 +470,7 @@ type OpenAIGatewayService struct {
 	deferredService       *DeferredService
 	openAITokenProvider   *OpenAITokenProvider
 	grokTokenProvider     *GrokTokenProvider
+	kimiOAuthService      *KimiOAuthService
 	toolCorrector         *CodexToolCorrector
 	openaiWSResolver      OpenAIWSProtocolResolver
 	resolver              *ModelPricingResolver
@@ -1220,6 +1221,13 @@ func hashSensitiveValueForLog(raw string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// SetKimiOAuthService attaches KimiOAuthService for on-demand Kimi OAuth token refresh.
+func (s *OpenAIGatewayService) SetKimiOAuthService(svc *KimiOAuthService) {
+	if s != nil {
+		s.kimiOAuthService = svc
+	}
+}
+
 // GetAccessToken gets the access token for an OpenAI account
 func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Account) (string, string, error) {
 	if account.IsShadow() {
@@ -1245,6 +1253,25 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			accessToken := account.GetGrokAccessToken()
 			if accessToken == "" {
 				return "", "", errors.New("access_token not found in credentials")
+			}
+			return accessToken, "oauth", nil
+		}
+		if account.Platform == PlatformKimi {
+			accessToken := account.GetKimiAccessToken()
+			expiresAt := account.GetCredentialAsTime("expires_at")
+			needsRefresh := accessToken == "" || (expiresAt != nil && time.Until(*expiresAt) < 2*time.Minute)
+			if needsRefresh && s.kimiOAuthService != nil && account.GetKimiRefreshToken() != "" {
+				if info, err := s.kimiOAuthService.RefreshAccountToken(ctx, account); err == nil && info != nil && info.AccessToken != "" {
+					newCreds := MergeCredentials(account.Credentials, s.kimiOAuthService.BuildAccountCredentials(info))
+					account.Credentials = newCreds
+					if s.accountRepo != nil && account.ID > 0 {
+						_ = s.accountRepo.Update(ctx, account)
+					}
+					return info.AccessToken, "oauth", nil
+				}
+			}
+			if accessToken == "" {
+				return "", "", errors.New("kimi access_token not found in credentials")
 			}
 			return accessToken, "oauth", nil
 		}

@@ -645,6 +645,7 @@ export interface AdminGroup extends Group {
   force_openai_fast: boolean
   force_openai_ultrafast: boolean
   free_openai_fast: boolean
+  deepseek_web_search_mode?: '' | 'default' | 'enabled' | 'disabled'
   model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
   // 分组利润控制（openai/anthropic/gemini/grok/antigravity 分组可启用；margin/buffer 为小数存储）。
   // 仅管理员可见：与 rate_multiplier 相乘即可反推上游成本上限，不得下放到 Group。
@@ -821,6 +822,7 @@ export interface CreateGroupRequest {
   force_openai_fast?: boolean
   force_openai_ultrafast?: boolean
   free_openai_fast?: boolean
+  deepseek_web_search_mode?: '' | 'default' | 'enabled' | 'disabled'
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
@@ -890,6 +892,7 @@ export interface UpdateGroupRequest {
   force_openai_fast?: boolean
   force_openai_ultrafast?: boolean
   free_openai_fast?: boolean
+  deepseek_web_search_mode?: '' | 'default' | 'enabled' | 'disabled'
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
@@ -945,7 +948,7 @@ export interface UpdateGroupRequest {
 // ==================== Account & Proxy Types ====================
 
 /** 前端内置专属界面（图标、配色、表单等）的平台。 */
-export type KnownAccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe' | 'command_code' | 'cline'
+export type KnownAccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe' | 'command_code' | 'cline' | 'devin' | 'meta'
 /**
  * 账号平台：内置平台，或后端平台清单中新登记的平台（任意字符串）。
  * `string & {}` 保留内置平台的字面量补全。
@@ -1525,6 +1528,11 @@ export interface AccountUsageInfo {
   antigravity_quota?: Record<string, AntigravityModelQuota> | null
   // Per-group 5-hour and weekly windows (retrieveUserQuotaSummary); every model of a group shares them.
   antigravity_quota_groups?: AntigravityQuotaGroup[] | null
+  devin_daily?: UsageProgress | null
+  devin_weekly?: UsageProgress | null
+  devin_plan?: string
+  devin_email?: string
+  devin_org_name?: string
   grok_request_quota?: GrokQuotaWindow | null
   grok_token_quota?: GrokQuotaWindow | null
   grok_retry_after_seconds?: number | null

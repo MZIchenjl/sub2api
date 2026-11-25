@@ -554,7 +554,21 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:
-		targetURL = chatgptCodexURL
+		if account.IsKimiOAuth() {
+			baseURL := account.GetOpenAIBaseURL()
+			if account.UsesNativeCNResponses() && account.IsAdaptiveAPIProtocol() {
+				baseURL = account.GetCNProtocolBaseURL(APIProtocolResponses)
+			}
+			if baseURL != "" {
+				validatedURL, err := s.validateUpstreamBaseURL(baseURL)
+				if err != nil {
+					return nil, err
+				}
+				targetURL = buildOpenAIResponsesURLForPlatform(account.Platform, validatedURL)
+			}
+		} else {
+			targetURL = chatgptCodexURL
+		}
 	case AccountTypeSetupToken:
 		if account.IsOpenAIOAuthLike() {
 			targetURL = chatgptCodexURL
@@ -576,6 +590,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	if s.isDeepSeekOfficialWebSearchEnabled(ctx, c, account, targetURL) {
+		body = adaptDeepSeekResponsesWebSearchTools(body, gjson.GetBytes(body, "model").String())
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -600,6 +617,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// 客户端回带的 x-codex-turn-state 若已知由其他账号铸造（failover 换号），
 	// 剥离后再出站（openai_codex_turn_state.go）。
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
+	applyKimiOAuthHeaders(req, account)
 
 	// 覆盖入站鉴权残留，并注入上游认证
 	req.Header.Del("authorization")

@@ -18,6 +18,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/devin"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/meta"
 	pkgerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -44,6 +46,8 @@ type GatewayHandler struct {
 	openAIGatewayService      *service.OpenAIGatewayService
 	geminiCompatService       *service.GeminiMessagesCompatService
 	antigravityGatewayService *service.AntigravityGatewayService
+	devinGatewayService       *service.DevinGatewayService
+	metaGatewayService        *service.MetaGatewayService
 	userService               *service.UserService
 	billingCacheService       *service.BillingCacheService
 	usageService              *service.UsageService
@@ -117,6 +121,20 @@ func NewGatewayHandler(
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
 		cfg:                       cfg,
 		settingService:            settingService,
+	}
+}
+
+// SetDevinGatewayService attaches the Devin gateway service to GatewayHandler.
+func (h *GatewayHandler) SetDevinGatewayService(svc *service.DevinGatewayService) {
+	if h != nil {
+		h.devinGatewayService = svc
+	}
+}
+
+// SetMetaGatewayService attaches the Meta Muse gateway service to GatewayHandler.
+func (h *GatewayHandler) SetMetaGatewayService(svc *service.MetaGatewayService) {
+	if h != nil {
+		h.metaGatewayService = svc
 	}
 }
 
@@ -921,7 +939,33 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
-			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
+			if account.Platform == service.PlatformDevin {
+				if h.devinGatewayService == nil {
+					h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Devin gateway service is not configured")
+					if queueRelease != nil {
+						queueRelease()
+					}
+					if accountReleaseFunc != nil {
+						accountReleaseFunc()
+					}
+					return
+				}
+				setActualUpstreamEndpoint(c, EndpointDevinChat)
+				result, err = h.devinGatewayService.Forward(requestCtx, c, account, attemptBody, hasBoundSession)
+			} else if account.Platform == service.PlatformMeta {
+				if h.metaGatewayService == nil {
+					h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Meta Muse gateway service is not configured")
+					if queueRelease != nil {
+						queueRelease()
+					}
+					if accountReleaseFunc != nil {
+						accountReleaseFunc()
+					}
+					return
+				}
+				setActualUpstreamEndpoint(c, EndpointMetaResponses)
+				result, err = h.metaGatewayService.Forward(requestCtx, c, account, attemptBody, hasBoundSession)
+			} else if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, attemptBody, hasBoundSession)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, attemptParsedReq)
@@ -1240,6 +1284,14 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		writeModelsList(c, platform, []string{typesafe.JevLatestModel})
 		return
 	}
+	if platform == service.PlatformDevin {
+		writeModelsList(c, platform, devin.DefaultModelIDs())
+		return
+	}
+	if platform == service.PlatformMeta {
+		writeModelsList(c, platform, meta.DefaultModelIDs())
+		return
+	}
 
 	writeModelsListResponse(c, claude.DefaultModels)
 }
@@ -1335,8 +1387,9 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 		if len(platformModels) == 0 && (platform != service.PlatformOpenAI || platformModels == nil) {
 			// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
 			// default 分支是 Claude 列表），composite 下只暴露账号映射键。
+			// Devin 仅暴露自身专属模型（如 swe-*），避免把未映射的跨平台同名模型挂进 composite。
 			if _, ok := schedulablePlatforms[platform]; ok && !service.IsMultiProtocolAPIKeyProvider(platform) {
-				platformModels = defaultModelIDsForPlatform(platform)
+				platformModels = compositeDefaultModelIDsForPlatform(platform)
 			}
 		}
 		for _, model := range platformModels {
@@ -1529,6 +1582,10 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return service.DefaultOpenCodeGoModelIDs()
 	case service.PlatformTypeSafe:
 		return []string{"jev-latest"}
+	case service.PlatformDevin:
+		return devin.DefaultModelIDs()
+	case service.PlatformMeta:
+		return meta.DefaultModelIDs()
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
@@ -1539,7 +1596,7 @@ func defaultModelIDsForPlatform(platform string) []string {
 			if concretePlatform == service.PlatformTypeSafe {
 				continue
 			}
-			for _, id := range defaultModelIDsForPlatform(concretePlatform) {
+			for _, id := range compositeDefaultModelIDsForPlatform(concretePlatform) {
 				if _, ok := seen[id]; ok {
 					continue
 				}
@@ -1555,6 +1612,20 @@ func defaultModelIDsForPlatform(platform string) []string {
 		}
 		return ids
 	}
+}
+
+func compositeDefaultModelIDsForPlatform(platform string) []string {
+	ids := defaultModelIDsForPlatform(platform)
+	if platform != service.PlatformDevin {
+		return ids
+	}
+	filtered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if detected, ok := service.DetectModelPlatform(id); ok && detected == service.PlatformDevin {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
 }
 
 func mergeModelIDs(primary, secondary []string) []string {

@@ -63,6 +63,15 @@ func RegisterAdminRoutes(
 		// Grok OAuth
 		registerGrokOAuthRoutes(admin, h)
 
+		// Devin OAuth
+		registerDevinOAuthRoutes(admin, h)
+
+		// Kimi Code OAuth
+		registerKimiOAuthRoutes(admin, h)
+
+		// Meta Muse OAuth
+		registerMetaOAuthRoutes(admin, h)
+
 		// 国产供应商（kimi/zhipu/deepseek）额度与余额
 		registerCNProviderRoutes(admin, h)
 
@@ -488,6 +497,33 @@ func registerAntigravityOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 		antigravity.POST("/oauth/auth-url", h.Admin.AntigravityOAuth.GenerateAuthURL)
 		antigravity.POST("/oauth/exchange-code", h.Admin.AntigravityOAuth.ExchangeCode)
 		antigravity.POST("/oauth/refresh-token", h.Admin.AntigravityOAuth.RefreshToken)
+	}
+}
+
+func registerDevinOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	devin := admin.Group("/devin")
+	{
+		devin.POST("/oauth/auth-url", h.Admin.DevinOAuth.GenerateAuthURL)
+		devin.POST("/oauth/exchange-code", h.Admin.DevinOAuth.ExchangeCode)
+		devin.POST("/oauth/validate-token", h.Admin.DevinOAuth.ValidateToken)
+	}
+}
+
+func registerKimiOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	kimi := admin.Group("/kimi")
+	{
+		kimi.POST("/oauth/device-code", h.Admin.KimiOAuth.StartDeviceFlow)
+		kimi.POST("/oauth/poll", h.Admin.KimiOAuth.PollDeviceFlow)
+		kimi.POST("/oauth/refresh", h.Admin.KimiOAuth.RefreshToken)
+	}
+}
+
+func registerMetaOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	meta := admin.Group("/meta")
+	{
+		meta.POST("/oauth/device-code", h.Admin.MetaOAuth.StartDeviceFlow)
+		meta.POST("/oauth/poll", h.Admin.MetaOAuth.PollDeviceFlow)
+		meta.POST("/oauth/validate-token", h.Admin.MetaOAuth.ValidateToken)
 	}
 }
 

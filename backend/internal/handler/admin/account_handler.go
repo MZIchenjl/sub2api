@@ -56,6 +56,8 @@ type AccountHandler struct {
 	geminiOAuthService      *service.GeminiOAuthService
 	antigravityOAuthService *service.AntigravityOAuthService
 	grokOAuthService        service.GrokOAuthTokenService
+	kimiOAuthService        *service.KimiOAuthService
+	metaOAuthService        *service.MetaOAuthService
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
@@ -82,6 +84,14 @@ func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUs
 
 func (h *AccountHandler) SetOpenCodeGoUsageService(usage *service.OpenCodeGoUsageService) {
 	h.opencodeGoUsage = usage
+}
+
+func (h *AccountHandler) SetKimiOAuthService(svc *service.KimiOAuthService) {
+	h.kimiOAuthService = svc
+}
+
+func (h *AccountHandler) SetMetaOAuthService(svc *service.MetaOAuthService) {
+	h.metaOAuthService = svc
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -1507,6 +1517,24 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 		if baseURL := strings.TrimSpace(account.GetCredential("base_url")); baseURL != "" {
 			newCredentials["base_url"] = baseURL
 		}
+	} else if account.Platform == service.PlatformKimi {
+		if h.kimiOAuthService == nil {
+			return nil, "", fmt.Errorf("kimi oauth service is not configured")
+		}
+		tokenInfo, err := h.kimiOAuthService.RefreshAccountToken(ctx, account)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to refresh Kimi credentials: %w", err)
+		}
+		newCredentials = service.MergeCredentials(account.Credentials, h.kimiOAuthService.BuildAccountCredentials(tokenInfo))
+	} else if account.Platform == service.PlatformMeta {
+		if h.metaOAuthService == nil {
+			return nil, "", fmt.Errorf("meta oauth service is not configured")
+		}
+		tokenInfo, err := h.metaOAuthService.RefreshAccountToken(ctx, account)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to refresh Meta credentials: %w", err)
+		}
+		newCredentials = service.MergeCredentials(account.Credentials, h.metaOAuthService.BuildAccountCredentials(tokenInfo))
 	} else {
 		// Use Anthropic/Claude OAuth service to refresh token
 		tokenInfo, err := h.oauthService.RefreshAccountToken(ctx, account)

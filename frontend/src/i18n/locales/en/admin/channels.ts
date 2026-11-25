@@ -216,6 +216,8 @@ export default {
         codexImageGenerationBridgeHint: 'When enabled, only non-Responses Lite Codex /responses text requests in OpenAI groups receive the hosted image_generation tool. The bridge does not inject tools for Responses Lite; local image_gen handling follows the client and account policy. Leave this off unless routed accounts support image generation.',
         bedrockCCCompat: 'Bedrock CC Compatibility',
         bedrockCCCompatHint: '⚠️ When enabled, requests to Bedrock accounts in this channel will be transformed for Claude Code compatibility (thinking type conversion, tool_use ID sanitization).',
+        deepseekWebSearch: 'DeepSeek Official Web Search',
+        deepseekWebSearchHint: 'When enabled, accounts targeting the official DeepSeek API (api.deepseek.com) use native free server-side web search (bypasses third-party emulation, preserves multi-turn search blocks, and adapts web_search tools across Anthropic/Responses/Chat). Only applies to api.deepseek.com; third-party relays are unaffected.',
         basicSettings: 'Basic Settings',
         addPlatform: 'Add Platform',
         noPlatforms: 'Click "Add Platform" to start configuring the channel',

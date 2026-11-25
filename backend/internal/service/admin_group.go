@@ -13,9 +13,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/devin"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/meta"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
@@ -300,6 +302,10 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return DefaultOpenCodeGoModelIDs()
 	case PlatformTypeSafe:
 		return []string{typesafe.JevLatestModel}
+	case PlatformDevin:
+		return devin.DefaultModelIDs()
+	case PlatformMeta:
+		return meta.DefaultModelIDs()
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:
@@ -335,6 +341,14 @@ func compositeDefaultModelsListCandidateIDs() []string {
 			continue
 		}
 		for _, id := range defaultModelsListCandidateIDs(platform) {
+			// Devin proxies cross-vendor model IDs (claude-*/gpt-*/gemini-*) that route to
+			// their native platforms in composite groups unless mapped explicitly. Only
+			// include Devin-exclusive models in static composite candidates.
+			if platform == PlatformDevin {
+				if detected, ok := DetectModelPlatform(id); !ok || detected != PlatformDevin {
+					continue
+				}
+			}
 			if _, ok := seen[id]; ok {
 				continue
 			}
@@ -373,6 +387,21 @@ func sanitizeGroupOpenAIFast(group *Group) {
 			group.FreeOpenAIFast = false
 		}
 	}
+}
+
+func groupSupportsDeepSeekWebSearch(platform string) bool {
+	return platform == PlatformDeepseek || platform == PlatformComposite || platform == PlatformOpenAI
+}
+
+func sanitizeGroupDeepSeekWebSearch(group *Group) {
+	if group == nil {
+		return
+	}
+	if !groupSupportsDeepSeekWebSearch(group.Platform) {
+		group.DeepSeekWebSearchMode = ""
+		return
+	}
+	group.DeepSeekWebSearchMode = NormalizeDeepSeekWebSearchMode(group.DeepSeekWebSearchMode)
 }
 
 func normalizeCreateGroupInputForSimpleMode(input *CreateGroupInput) {
@@ -629,6 +658,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
 		ForceOpenAIUltrafast:            input.ForceOpenAIUltrafast,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
+		DeepSeekWebSearchMode:           input.DeepSeekWebSearchMode,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
 		RequirePrivacySet:               input.RequirePrivacySet,
 		DefaultMappedModel:              input.DefaultMappedModel,
@@ -644,6 +674,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	sanitizeGroupDeepSeekWebSearch(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
@@ -1027,6 +1058,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.FreeOpenAIFast != nil {
 		group.FreeOpenAIFast = *input.FreeOpenAIFast
 	}
+	if input.DeepSeekWebSearchMode != nil {
+		group.DeepSeekWebSearchMode = *input.DeepSeekWebSearchMode
+	}
 	if input.RequireOAuthOnly != nil {
 		group.RequireOAuthOnly = *input.RequireOAuthOnly
 	}
@@ -1075,6 +1109,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	sanitizeGroupDeepSeekWebSearch(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}

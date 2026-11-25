@@ -20,7 +20,9 @@
                   ? 'from-blue-500 to-blue-600'
                   : isAntigravity
                     ? 'from-purple-500 to-purple-600'
-                    : 'from-orange-500 to-orange-600'
+                    : isDevin
+                      ? 'from-emerald-500 to-teal-600'
+                      : 'from-orange-500 to-orange-600'
             ]"
           >
             <Icon name="sparkles" size="md" class="text-white" />
@@ -37,7 +39,9 @@
                     ? t('admin.accounts.geminiAccount')
                     : isAntigravity
                       ? t('admin.accounts.antigravityAccount')
-                      : t('admin.accounts.claudeCodeAccount')
+                      : isDevin
+                        ? 'Devin'
+                        : t('admin.accounts.claudeCodeAccount')
               }}
             </span>
           </div>
@@ -116,7 +120,24 @@
         </div>
       </div>
 
+      <DeviceCodeAuthFlow
+        v-if="isDeviceCodePlatform"
+        ref="deviceFlowRef"
+        :platform="isMeta ? 'meta' : 'kimi'"
+        :kimi-domain="kimiOAuth.domain.value"
+        :user-code="isMeta ? metaOAuth.userCode.value : kimiOAuth.userCode.value"
+        :verification-uri="isMeta ? metaOAuth.verificationUri.value : kimiOAuth.verificationUri.value"
+        :verification-uri-complete="isMeta ? metaOAuth.verificationUriComplete.value : kimiOAuth.verificationUriComplete.value"
+        :polling="isMeta ? metaOAuth.polling.value : kimiOAuth.polling.value"
+        :loading="isMeta ? metaOAuth.loading.value : kimiOAuth.loading.value"
+        :error="isMeta ? metaOAuth.error.value : kimiOAuth.error.value"
+        @update:kimi-domain="(val) => (kimiOAuth.domain.value = val)"
+        @start="handleDeviceFlowStart"
+        @stop="handleDeviceFlowStop"
+        @validate-token="handleMetaValidateDirectToken"
+      />
       <OAuthAuthorizationFlow
+        v-else
         ref="oauthFlowRef"
         :add-method="addMethod"
         :auth-url="currentAuthUrl"
@@ -128,7 +149,7 @@
         :show-cookie-option="isAnthropic"
         :allow-multiple="false"
         :method-label="t('admin.accounts.inputMethod')"
-        :platform="isOpenAI ? 'openai' : isGemini ? 'gemini' : isAntigravity ? 'antigravity' : 'anthropic'"
+        :platform="isOpenAI ? 'openai' : isGemini ? 'gemini' : isAntigravity ? 'antigravity' : isDevin ? 'devin' : 'anthropic'"
         :show-project-id="isGemini && geminiOAuthType === 'code_assist'"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
@@ -142,7 +163,7 @@
           {{ t('common.cancel') }}
         </button>
         <button
-          v-if="isManualInputMethod"
+          v-if="!isDeviceCodePlatform && isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"
           class="btn btn-primary"
@@ -192,10 +213,16 @@ import {
 import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
+import { useDevinOAuth } from '@/composables/useDevinOAuth'
+import { useKimiOAuth } from '@/composables/useKimiOAuth'
+import { useMetaOAuth } from '@/composables/useMetaOAuth'
+import type { KimiOAuthDomain, KimiTokenInfo } from '@/api/admin/kimi'
+import type { MetaTokenInfo } from '@/api/admin/meta'
 import type { Account } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
+import DeviceCodeAuthFlow from './DeviceCodeAuthFlow.vue'
 
 // Type for exposed OAuthAuthorizationFlow component
 // Note: defineExpose automatically unwraps refs, so we use the unwrapped types
@@ -227,9 +254,13 @@ const claudeOAuth = useAccountOAuth()
 const openaiOAuth = useOpenAIOAuth()
 const geminiOAuth = useGeminiOAuth()
 const antigravityOAuth = useAntigravityOAuth()
+const devinOAuth = useDevinOAuth()
+const kimiOAuth = useKimiOAuth()
+const metaOAuth = useMetaOAuth()
 
 // Refs
 const oauthFlowRef = ref<OAuthFlowExposed | null>(null)
+const deviceFlowRef = ref<{ reset: () => void } | null>(null)
 
 // State
 const addMethod = ref<AddMethod>('oauth')
@@ -241,37 +272,45 @@ const isOpenAILike = computed(() => isOpenAI.value)
 const isGemini = computed(() => props.account?.platform === 'gemini')
 const isAnthropic = computed(() => props.account?.platform === 'anthropic')
 const isAntigravity = computed(() => props.account?.platform === 'antigravity')
+const isDevin = computed(() => props.account?.platform === 'devin')
+const isKimi = computed(() => props.account?.platform === 'kimi')
+const isMeta = computed(() => props.account?.platform === 'meta')
+const isDeviceCodePlatform = computed(() => isKimi.value || isMeta.value)
 
 // Computed - current OAuth state based on platform
 const currentAuthUrl = computed(() => {
   if (isOpenAILike.value) return openaiOAuth.authUrl.value
   if (isGemini.value) return geminiOAuth.authUrl.value
   if (isAntigravity.value) return antigravityOAuth.authUrl.value
+  if (isDevin.value) return devinOAuth.authUrl.value
   return claudeOAuth.authUrl.value
 })
 const currentSessionId = computed(() => {
   if (isOpenAILike.value) return openaiOAuth.sessionId.value
   if (isGemini.value) return geminiOAuth.sessionId.value
   if (isAntigravity.value) return antigravityOAuth.sessionId.value
+  if (isDevin.value) return devinOAuth.sessionId.value
   return claudeOAuth.sessionId.value
 })
 const currentLoading = computed(() => {
   if (isOpenAILike.value) return openaiOAuth.loading.value
   if (isGemini.value) return geminiOAuth.loading.value
   if (isAntigravity.value) return antigravityOAuth.loading.value
+  if (isDevin.value) return devinOAuth.loading.value
   return claudeOAuth.loading.value
 })
 const currentError = computed(() => {
   if (isOpenAILike.value) return openaiOAuth.error.value
   if (isGemini.value) return geminiOAuth.error.value
   if (isAntigravity.value) return antigravityOAuth.error.value
+  if (isDevin.value) return devinOAuth.error.value
   return claudeOAuth.error.value
 })
 
 // Computed
 const isManualInputMethod = computed(() => {
-  // OpenAI/Gemini/Antigravity always use manual input (no cookie auth option)
-  return isOpenAILike.value || isGemini.value || isAntigravity.value || oauthFlowRef.value?.inputMethod === 'manual'
+  // OpenAI/Gemini/Antigravity/Devin always use manual input (no cookie auth option)
+  return isOpenAILike.value || isGemini.value || isAntigravity.value || isDevin.value || oauthFlowRef.value?.inputMethod === 'manual'
 })
 
 const canExchangeCode = computed(() => {
@@ -302,6 +341,10 @@ watch(
               ? 'ai_studio'
               : 'code_assist'
       }
+      if (isKimi.value) {
+        const creds = (props.account.credentials || {}) as Record<string, unknown>
+        kimiOAuth.domain.value = (creds.kimi_domain === 'kimi.ai' ? 'kimi.ai' : 'kimi.com') as KimiOAuthDomain
+      }
     } else {
       resetState()
     }
@@ -316,7 +359,77 @@ const resetState = () => {
   openaiOAuth.resetState()
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
+  devinOAuth.resetState()
+  kimiOAuth.resetState()
+  metaOAuth.resetState()
   oauthFlowRef.value?.reset()
+  deviceFlowRef.value?.reset()
+}
+
+const completeDeviceCodeReAuth = async (
+  credentials: Record<string, unknown>,
+  extra: Record<string, unknown>
+) => {
+  if (!props.account) return
+  try {
+    await adminAPI.accounts.update(props.account.id, {
+      type: 'oauth',
+      credentials,
+      extra
+    })
+    await adminAPI.accounts.clearError(props.account.id)
+    appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+    emit('reauthorized')
+    handleClose()
+  } catch (error: any) {
+    const msg = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
+    if (isMeta.value) {
+      metaOAuth.error.value = msg
+    } else {
+      kimiOAuth.error.value = msg
+    }
+    appStore.showError(msg)
+  }
+}
+
+const handleDeviceFlowStart = async () => {
+  if (!props.account) return
+  if (isKimi.value) {
+    await kimiOAuth.startDeviceFlow(props.account.proxy_id, async (tokenInfo: KimiTokenInfo) => {
+      await completeDeviceCodeReAuth(
+        kimiOAuth.buildCredentials(tokenInfo),
+        kimiOAuth.buildExtra(tokenInfo)
+      )
+    })
+  } else if (isMeta.value) {
+    await metaOAuth.startDeviceFlow(props.account.proxy_id, async (tokenInfo: MetaTokenInfo) => {
+      const existingBaseUrl = typeof (props.account?.credentials as any)?.base_url === 'string'
+        ? (props.account?.credentials as any).base_url
+        : undefined
+      await completeDeviceCodeReAuth(
+        metaOAuth.buildCredentials(tokenInfo, existingBaseUrl),
+        metaOAuth.buildExtra(tokenInfo)
+      )
+    })
+  }
+}
+
+const handleDeviceFlowStop = () => {
+  kimiOAuth.stopPolling()
+  metaOAuth.stopPolling()
+}
+
+const handleMetaValidateDirectToken = async (token: string) => {
+  if (!props.account) return
+  const existingBaseUrl = typeof (props.account.credentials as any)?.base_url === 'string'
+    ? (props.account.credentials as any).base_url
+    : undefined
+  const tokenInfo = await metaOAuth.validateToken(token, existingBaseUrl, props.account.proxy_id)
+  if (!tokenInfo) return
+  await completeDeviceCodeReAuth(
+    metaOAuth.buildCredentials(tokenInfo, existingBaseUrl),
+    metaOAuth.buildExtra(tokenInfo)
+  )
 }
 
 const handleClose = () => {
@@ -335,6 +448,8 @@ const handleGenerateUrl = async () => {
     await geminiOAuth.generateAuthUrl(props.account.proxy_id, projectId, geminiOAuthType.value, tierId)
   } else if (isAntigravity.value) {
     await antigravityOAuth.generateAuthUrl(props.account.proxy_id)
+  } else if (isDevin.value) {
+    await devinOAuth.generateAuthUrl(props.account.proxy_id)
   } else {
     await claudeOAuth.generateAuthUrl(addMethod.value, props.account.proxy_id)
   }
@@ -452,6 +567,37 @@ const handleExchangeCode = async () => {
     } catch (error: any) {
       antigravityOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
       appStore.showError(antigravityOAuth.error.value)
+    }
+  } else if (isDevin.value) {
+    const sessionId = devinOAuth.sessionId.value
+    if (!sessionId) return
+    const stateToUse = (oauthFlowRef.value?.oauthState || devinOAuth.state.value || '').trim()
+    const tokenInfo = await devinOAuth.exchangeAuthCode({
+      code: authCode.trim(),
+      sessionId,
+      state: stateToUse,
+      proxyId: props.account.proxy_id
+    })
+    if (!tokenInfo) return
+
+    const existingBaseUrl = typeof (props.account.credentials as any)?.base_url === 'string'
+      ? (props.account.credentials as any).base_url
+      : undefined
+    const credentials = devinOAuth.buildCredentials(tokenInfo, existingBaseUrl)
+    const extra = devinOAuth.buildExtra(tokenInfo)
+    try {
+      await adminAPI.accounts.update(props.account.id, {
+        type: 'oauth',
+        credentials,
+        extra
+      })
+      await adminAPI.accounts.clearError(props.account.id)
+      appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+      emit('reauthorized')
+      handleClose()
+    } catch (error: any) {
+      devinOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
+      appStore.showError(devinOAuth.error.value)
     }
   } else {
     // Claude OAuth flow

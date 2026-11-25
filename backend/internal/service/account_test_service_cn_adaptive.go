@@ -3,6 +3,7 @@ package service
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,18 @@ import (
 )
 
 const accountTestSuppressCompletionContextKey = "account_test_suppress_completion"
+
+func (s *AccountTestService) resolveCNProviderTestToken(ctx context.Context, account *Account) string {
+	if account == nil {
+		return ""
+	}
+	if account.IsKimiOAuth() && s.openaiGatewayService != nil {
+		if token, _, err := s.openaiGatewayService.GetAccessToken(ctx, account); err == nil && strings.TrimSpace(token) != "" {
+			return strings.TrimSpace(token)
+		}
+	}
+	return strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
+}
 
 // testCNProviderAdaptiveConnection verifies every native endpoint used by an
 // adaptive account of a provider that routes by inbound protocol. Zhipu uses
@@ -32,7 +45,7 @@ func (s *AccountTestService) testCNProviderAdaptiveConnection(c *gin.Context, ac
 	}
 	testModelID := account.GetMappedModel(requestedModelID)
 
-	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
+	authToken := s.resolveCNProviderTestToken(c.Request.Context(), account)
 	if authToken == "" {
 		return s.sendErrorAndEnd(c, "No API key available")
 	}
@@ -92,6 +105,7 @@ func (s *AccountTestService) testCNProviderAdaptiveAnthropicConnection(c *gin.Co
 	// base_url 强制 Bearer，其余保持 extra/default 行为。
 	setAnthropicAPIKeyAuthHeader(req.Header, account, authToken, account.GetCNProtocolBaseURL(APIProtocolAnthropic))
 	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
+	applyKimiOAuthHeaders(req, account)
 	account.ApplyHeaderOverrides(req.Context(), req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 
@@ -187,6 +201,7 @@ func (s *AccountTestService) testCNProviderAdaptiveResponsesConnection(c *gin.Co
 	req.Header.Set("Authorization", "Bearer "+authToken)
 	applyOpenAICodexProbeHeaders(req.Header)
 	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
+	applyKimiOAuthHeaders(req, account)
 	account.ApplyHeaderOverrides(req.Context(), req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 
@@ -235,7 +250,7 @@ func (s *AccountTestService) testCNProviderAnthropicConnection(c *gin.Context, a
 	}
 	testModelID = account.GetMappedModel(testModelID)
 
-	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
+	authToken := s.resolveCNProviderTestToken(c.Request.Context(), account)
 	if authToken == "" {
 		return s.sendErrorAndEnd(c, "No API key available")
 	}
@@ -277,6 +292,7 @@ func (s *AccountTestService) testCNProviderAnthropicConnection(c *gin.Context, a
 	// extra/default 行为。
 	setAnthropicAPIKeyAuthHeader(req.Header, account, authToken, account.GetAnthropicProtocolBaseURL())
 	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
+	applyKimiOAuthHeaders(req, account)
 	account.ApplyHeaderOverrides(req.Context(), req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 

@@ -2458,6 +2458,26 @@
         </div>
       </div>
 
+      <!-- DeepSeek Official Web Search (DeepSeek API Key or OpenAI API Key targeting api.deepseek.com) -->
+      <div
+        v-if="showDeepSeekWebSearchOption"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.deepseek.webSearch') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.deepseek.webSearchDesc') }}
+            </p>
+          </div>
+          <select v-model="deepseekWebSearchMode" data-testid="deepseek-web-search-mode" class="input w-40 text-sm">
+            <option value="default">{{ t('admin.accounts.deepseek.webSearchDefault') }}</option>
+            <option value="enabled">{{ t('admin.accounts.deepseek.webSearchEnabled') }}</option>
+            <option value="disabled">{{ t('admin.accounts.deepseek.webSearchDisabled') }}</option>
+          </select>
+        </div>
+      </div>
+
       <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
       <div
         v-if="account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')"
@@ -4222,6 +4242,21 @@ type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
+const deepseekWebSearchMode = ref<'default' | 'enabled' | 'disabled'>('default')
+
+const isOfficialDeepSeekHost = (rawUrl: string): boolean => {
+  try {
+    return new URL(rawUrl.trim()).hostname.toLowerCase() === 'api.deepseek.com'
+  } catch {
+    return false
+  }
+}
+
+const showDeepSeekWebSearchOption = computed(() => {
+  if (props.account?.type !== 'apikey') return false
+  if (props.account?.platform === 'deepseek') return true
+  return props.account?.platform === 'openai' && isOfficialDeepSeekHost(editBaseUrl.value)
+})
 const webSearchGlobalEnabled = ref(false)
 const {
   globalEnabled: quotaNotifyGlobalEnabled,
@@ -4525,6 +4560,8 @@ const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
   if (props.account?.platform === 'grok') return 'https://api.x.ai/v1'
   if (props.account?.platform === 'typesafe') return 'https://api.typesafe.ai'
+  if (props.account?.platform === 'devin') return 'https://server.codeium.com'
+  if (props.account?.platform === 'meta') return 'https://api.meta.ai/v1'
   // CN 供应商：按当前模式/协议回落到官方预设（清空输入框提交时使用），
   // 不能落到 anthropic 默认值（会被当 CC base 拼出错误端点）。
   if (props.account && isMultiProtocolApiKeyPlatform(props.account.platform)) {
@@ -4740,6 +4777,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
+  deepseekWebSearchMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openaiPassthroughModelFilterEnabled.value = extra?.openai_passthrough_model_filter === true
@@ -4816,6 +4854,18 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       webSearchEmulationMode.value = 'enabled'
     } else {
       webSearchEmulationMode.value = 'default'
+    }
+  }
+  if ((newAccount.platform === 'deepseek' || newAccount.platform === 'openai') && newAccount.type === 'apikey') {
+    const dsWsVal = extra?.deepseek_web_search
+    if (dsWsVal === 'enabled' || dsWsVal === 'disabled') {
+      deepseekWebSearchMode.value = dsWsVal
+    } else if (dsWsVal === true) {
+      deepseekWebSearchMode.value = 'enabled'
+    } else if (dsWsVal === false) {
+      deepseekWebSearchMode.value = 'disabled'
+    } else {
+      deepseekWebSearchMode.value = 'default'
     }
   }
 
@@ -6409,6 +6459,22 @@ const handleSubmit = async () => {
       }
 
       updatePayload.extra = newExtra
+    }
+
+    // For DeepSeek API Key (or OpenAI API Key targeting api.deepseek.com), persist deepseek_web_search in extra
+    if ((props.account.platform === 'deepseek' || props.account.platform === 'openai') && props.account.type === 'apikey') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      const hadDeepSeekWebSearch = currentExtra.deepseek_web_search !== undefined
+      if (showDeepSeekWebSearchOption.value || hadDeepSeekWebSearch) {
+        const newExtra: Record<string, unknown> = { ...currentExtra }
+        if (!showDeepSeekWebSearchOption.value || deepseekWebSearchMode.value === 'default') {
+          delete newExtra.deepseek_web_search
+        } else {
+          newExtra.deepseek_web_search = deepseekWebSearchMode.value
+        }
+        updatePayload.extra = newExtra
+      }
     }
 
     // For apikey/bedrock/service_account accounts, handle quota_limit in extra

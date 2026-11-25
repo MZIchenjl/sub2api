@@ -310,6 +310,11 @@ func FreeOpenaiFast(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFreeOpenaiFast, v))
 }
 
+// DeepseekWebSearchMode applies equality check predicate on the "deepseek_web_search_mode" field. It's identical to DeepseekWebSearchModeEQ.
+func DeepseekWebSearchMode(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldDeepseekWebSearchMode, v))
+}
+
 // RequireOauthOnly applies equality check predicate on the "require_oauth_only" field. It's identical to RequireOauthOnlyEQ.
 func RequireOauthOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRequireOauthOnly, v))
@@ -2333,6 +2338,71 @@ func FreeOpenaiFastEQ(v bool) predicate.Group {
 // FreeOpenaiFastNEQ applies the NEQ predicate on the "free_openai_fast" field.
 func FreeOpenaiFastNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldFreeOpenaiFast, v))
+}
+
+// DeepseekWebSearchModeEQ applies the EQ predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeNEQ applies the NEQ predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeIn applies the In predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldDeepseekWebSearchMode, vs...))
+}
+
+// DeepseekWebSearchModeNotIn applies the NotIn predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldDeepseekWebSearchMode, vs...))
+}
+
+// DeepseekWebSearchModeGT applies the GT predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeGTE applies the GTE predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeLT applies the LT predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeLTE applies the LTE predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeContains applies the Contains predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeHasPrefix applies the HasPrefix predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeHasSuffix applies the HasSuffix predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeEqualFold applies the EqualFold predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldDeepseekWebSearchMode, v))
+}
+
+// DeepseekWebSearchModeContainsFold applies the ContainsFold predicate on the "deepseek_web_search_mode" field.
+func DeepseekWebSearchModeContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldDeepseekWebSearchMode, v))
 }
 
 // RequireOauthOnlyEQ applies the EQ predicate on the "require_oauth_only" field.

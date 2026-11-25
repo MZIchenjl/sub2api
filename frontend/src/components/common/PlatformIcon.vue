@@ -71,6 +71,15 @@
     <rect x="65.5996" y="44.8008" width="9.6" height="28.8" rx="4.8" />
     <rect x="36.8008" y="44.8008" width="9.6" height="28.8" rx="4.8" />
   </svg>
+  <!-- Devin / Cognition geometric D mark -->
+  <svg v-else-if="platform === 'devin'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M5 3h7.2C17.4 3 21 6.7 21 12s-3.6 9-8.8 9H5V3zm3.6 3.3v11.4h3.5c3.2 0 5.2-2.2 5.2-5.7s-2-5.7-5.2-5.7H8.6z" />
+    <circle cx="12.2" cy="12" r="2.1" />
+  </svg>
+  <!-- Meta Muse infinity loop mark -->
+  <svg v-else-if="platform === 'meta'" :class="sizeClass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.133-8-12.739-8-4.585 0-4.585 8 0 8 5.606 0 7.644-8 12.74-8z" />
+  </svg>
   <!-- Composite group icon -->
   <svg v-else-if="platform === 'composite'" :class="sizeClass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     <circle cx="6" cy="12" r="3" />

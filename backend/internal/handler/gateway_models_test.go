@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/devin"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/meta"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -1091,6 +1093,82 @@ func TestDefaultCodexModelIDsForPlatform_DeepSeekUsesDeepSeekModels(t *testing.T
 
 func TestDefaultModelIDsForPlatform_TypeSafeUsesJev(t *testing.T) {
 	require.Equal(t, []string{"jev-latest"}, defaultModelIDsForPlatform(service.PlatformTypeSafe))
+}
+
+func TestGatewayModels_DevinAndMetaFallbackToPlatformDefaults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range []struct {
+		name     string
+		platform string
+		want     []string
+	}{
+		{name: "devin", platform: service.PlatformDevin, want: devin.DefaultModelIDs()},
+		{name: "meta", platform: service.PlatformMeta, want: meta.DefaultModelIDs()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			groupID := int64(36)
+			h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+				byGroup: map[int64][]service.Account{
+					groupID: {
+						{ID: 1, Platform: tc.platform, Status: service.StatusActive, Schedulable: true},
+					},
+				},
+			})
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+			c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+				Group: &service.Group{ID: groupID, Platform: tc.platform},
+			})
+
+			h.Models(c)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			var got gatewayModelsResponseForTest
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			require.Equal(t, tc.want, modelIDsForTest(got.Data))
+		})
+	}
+}
+
+func TestGatewayModels_CompositeUnmappedDevinExposesOnlyDevinExclusiveModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(37)
+	h := newGatewayModelsHandlerForTest(
+		&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				groupID: {
+					{ID: 1, Platform: service.PlatformDevin, Status: service.StatusActive, Schedulable: true},
+					{ID: 2, Platform: service.PlatformMeta, Status: service.StatusActive, Schedulable: true},
+				},
+			},
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformComposite},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+
+	ids := modelIDsForTest(got.Data)
+	require.Contains(t, ids, "swe-2")
+	require.Contains(t, ids, "swe-2-flash")
+	require.Contains(t, ids, "muse-ember-1.0")
+	require.Contains(t, ids, "muse-spark-1.3")
+	require.NotContains(t, ids, "claude-opus-4-6")
+	require.NotContains(t, ids, "gpt-6-astra")
 }
 
 func TestGatewayCodexModels_DeepSeekWithoutMappingUsesDeepSeekDefaults(t *testing.T) {
