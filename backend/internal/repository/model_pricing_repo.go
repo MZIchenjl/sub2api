@@ -19,6 +19,21 @@ func NewModelPricingRepository(db *sql.DB) service.ModelPricingRepository {
 	return &modelPricingRepository{db: db}
 }
 
+func nullableFloat64Arg(v *float64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func scanNullableFloat64(n sql.NullFloat64) *float64 {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Float64
+	return &v
+}
+
 func (r *modelPricingRepository) ListCatalogEntries(ctx context.Context) ([]service.ModelPricingCatalogRecord, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil model pricing repository")
@@ -27,7 +42,7 @@ func (r *modelPricingRepository) ListCatalogEntries(ctx context.Context) ([]serv
 	const query = `
 		SELECT
 			channel_id, raw_model_id, model_id, platform,
-			display_name, family, release_date, status, mode,
+			display_name, family, release_date, status, mode, pricing_missing,
 			input_per_million, output_per_million,
 			cache_read_per_million, cache_write_per_million, cache_write_explicit,
 			cache_write_1h_per_million, cache_storage_per_million_per_hour,
@@ -46,22 +61,23 @@ func (r *modelPricingRepository) ListCatalogEntries(ctx context.Context) ([]serv
 	var out []service.ModelPricingCatalogRecord
 	for rows.Next() {
 		var rec service.ModelPricingCatalogRecord
-		var cacheWrite1h sql.NullFloat64
+		var inPM, outPM, cacheReadPM, cacheWritePM, cacheWrite1h sql.NullFloat64
 		if err := rows.Scan(
 			&rec.ChannelID, &rec.RawModelID, &rec.ModelID, &rec.Platform,
-			&rec.DisplayName, &rec.Family, &rec.ReleaseDate, &rec.Status, &rec.Mode,
-			&rec.InputPerMillion, &rec.OutputPerMillion,
-			&rec.CacheReadPerMillion, &rec.CacheWritePerMillion, &rec.CacheWriteExplicit,
+			&rec.DisplayName, &rec.Family, &rec.ReleaseDate, &rec.Status, &rec.Mode, &rec.PricingMissing,
+			&inPM, &outPM,
+			&cacheReadPM, &cacheWritePM, &rec.CacheWriteExplicit,
 			&cacheWrite1h, &rec.CacheStoragePerMillionPerHour,
 			&rec.LongContextThreshold, &rec.LongContextInputMult, &rec.LongContextOutputMult,
 			&rec.Score, &rec.SyncedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan model_pricing_catalog_entries: %w", err)
 		}
-		if cacheWrite1h.Valid {
-			v := cacheWrite1h.Float64
-			rec.CacheWrite1hPerMillion = &v
-		}
+		rec.InputPerMillion = scanNullableFloat64(inPM)
+		rec.OutputPerMillion = scanNullableFloat64(outPM)
+		rec.CacheReadPerMillion = scanNullableFloat64(cacheReadPM)
+		rec.CacheWritePerMillion = scanNullableFloat64(cacheWritePM)
+		rec.CacheWrite1hPerMillion = scanNullableFloat64(cacheWrite1h)
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
@@ -107,10 +123,7 @@ func (r *modelPricingRepository) ListOverrides(ctx context.Context) ([]service.M
 		); err != nil {
 			return nil, fmt.Errorf("scan model_pricing_overrides: %w", err)
 		}
-		if cacheWrite1h.Valid {
-			v := cacheWrite1h.Float64
-			rec.CacheWrite1hPerMillion = &v
-		}
+		rec.CacheWrite1hPerMillion = scanNullableFloat64(cacheWrite1h)
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
@@ -145,7 +158,7 @@ func (r *modelPricingRepository) ReplaceCatalogAndReconcileOverrides(
 		stmt, err := tx.PrepareContext(ctx, pq.CopyIn(
 			"model_pricing_catalog_entries",
 			"channel_id", "raw_model_id", "model_id", "platform",
-			"display_name", "family", "release_date", "status", "mode",
+			"display_name", "family", "release_date", "status", "mode", "pricing_missing",
 			"input_per_million", "output_per_million",
 			"cache_read_per_million", "cache_write_per_million", "cache_write_explicit",
 			"cache_write_1h_per_million", "cache_storage_per_million_per_hour",
@@ -161,17 +174,13 @@ func (r *modelPricingRepository) ReplaceCatalogAndReconcileOverrides(
 			if syncedAt.IsZero() {
 				syncedAt = time.Now().UTC()
 			}
-			var cacheWrite1h any
-			if rec.CacheWrite1hPerMillion != nil {
-				cacheWrite1h = *rec.CacheWrite1hPerMillion
-			}
 			if _, err := stmt.ExecContext(
 				ctx,
 				rec.ChannelID, rec.RawModelID, rec.ModelID, rec.Platform,
-				rec.DisplayName, rec.Family, rec.ReleaseDate, rec.Status, rec.Mode,
-				rec.InputPerMillion, rec.OutputPerMillion,
-				rec.CacheReadPerMillion, rec.CacheWritePerMillion, rec.CacheWriteExplicit,
-				cacheWrite1h, rec.CacheStoragePerMillionPerHour,
+				rec.DisplayName, rec.Family, rec.ReleaseDate, rec.Status, rec.Mode, rec.PricingMissing,
+				nullableFloat64Arg(rec.InputPerMillion), nullableFloat64Arg(rec.OutputPerMillion),
+				nullableFloat64Arg(rec.CacheReadPerMillion), nullableFloat64Arg(rec.CacheWritePerMillion), rec.CacheWriteExplicit,
+				nullableFloat64Arg(rec.CacheWrite1hPerMillion), rec.CacheStoragePerMillionPerHour,
 				rec.LongContextThreshold, rec.LongContextInputMult, rec.LongContextOutputMult,
 				rec.Score, syncedAt.UTC(),
 			); err != nil {
@@ -220,10 +229,6 @@ func (r *modelPricingRepository) UpsertOverride(
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
 	}
-	var cacheWrite1h any
-	if rec.CacheWrite1hPerMillion != nil {
-		cacheWrite1h = *rec.CacheWrite1hPerMillion
-	}
 
 	const upsertQuery = `
 		INSERT INTO model_pricing_overrides (
@@ -263,7 +268,7 @@ func (r *modelPricingRepository) UpsertOverride(
 		rec.Scope, rec.ScopeID, rec.ModelID, rec.Platform, rec.DisplayName,
 		rec.InputPerMillion, rec.OutputPerMillion,
 		rec.CacheReadPerMillion, rec.CacheWritePerMillion,
-		cacheWrite1h, rec.CacheStoragePerMillionPerHour,
+		nullableFloat64Arg(rec.CacheWrite1hPerMillion), rec.CacheStoragePerMillionPerHour,
 		rec.LongContextThreshold, rec.LongContextInputMult, rec.LongContextOutputMult,
 		rec.Locked, rec.IsCustom, updatedAt.UTC(),
 	); err != nil {

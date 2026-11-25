@@ -348,6 +348,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	}
 	duplicate.AccountGroups = groups
 	duplicate.GroupIDs = groupIDs
+	s.notifyPricingInventoryChanged()
 	return duplicate, nil
 }
 
@@ -563,6 +564,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	}
 
 	AfterAccountCommit(ctx, func(_ context.Context) {
+		s.notifyPricingInventoryChanged()
 		// OAuth 账号：创建后异步设置隐私。
 		// 使用 Ensure（幂等）而非 Force：新建账号 Extra 为空时效果相同，但更安全。
 		if account.Type == AccountTypeOAuth {
@@ -965,6 +967,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	s.notifyPricingInventoryChanged()
 	return updated, nil
 }
 
@@ -994,7 +997,11 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	if len(updates) == 0 {
 		return nil
 	}
-	return s.accountRepo.UpdateExtra(ctx, id, updates)
+	if err := s.accountRepo.UpdateExtra(ctx, id, updates); err != nil {
+		return err
+	}
+	s.notifyPricingInventoryChanged()
+	return nil
 }
 
 // BulkUpdateAccounts updates multiple accounts in one request.
@@ -1261,6 +1268,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		result.Results = append(result.Results, entry)
 	}
 
+	if result.Success > 0 {
+		s.notifyPricingInventoryChanged()
+	}
 	return result, nil
 }
 
@@ -1352,6 +1362,7 @@ func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 	if err := s.accountRepo.Delete(ctx, id); err != nil {
 		return err
 	}
+	s.notifyPricingInventoryChanged()
 	return nil
 }
 
@@ -1541,6 +1552,7 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 		shadow.GroupIDs = groupIDs
 	}
 
+	s.notifyPricingInventoryChanged()
 	return shadow, nil
 }
 

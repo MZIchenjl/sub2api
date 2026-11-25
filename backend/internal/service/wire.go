@@ -34,15 +34,64 @@ type BuildInfo struct {
 }
 
 // ProvidePricingService creates and initializes PricingService with PostgreSQL persistence
-func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient, settingRepo SettingRepository, modelPricingRepo ModelPricingRepository) (*PricingService, error) {
+// and inventory-driven active model reconciliation.
+func ProvidePricingService(
+	cfg *config.Config,
+	remoteClient PricingRemoteClient,
+	settingRepo SettingRepository,
+	modelPricingRepo ModelPricingRepository,
+	accountRepo AccountRepository,
+) (*PricingService, error) {
 	svc := NewPricingService(cfg, remoteClient)
 	svc.SetSettingRepository(settingRepo)
 	svc.SetModelPricingRepository(modelPricingRepo)
+	svc.SetInventoryProvider(NewAccountPricingInventoryProvider(accountRepo))
 	if err := svc.Initialize(); err != nil {
 		// Pricing service initialization failure should not block startup
 		println("[Service] Warning: Pricing service initialization failed:", err.Error())
 	}
 	return svc, nil
+}
+
+// ProvideAdminService creates AdminService and hooks PricingService inventory reconciliation.
+func ProvideAdminService(
+	cfg *config.Config,
+	userRepo UserRepository,
+	groupRepo AdminGroupRepository,
+	accountRepo AdminAccountRepository,
+	proxyRepo ProxyRepository,
+	apiKeyRepo APIKeyRepository,
+	redeemCodeRepo RedeemCodeRepository,
+	userGroupRateRepo UserGroupRateRepository,
+	userRPMCache UserRPMCache,
+	billingCacheService *BillingCacheService,
+	proxyProber ProxyExitInfoProber,
+	proxyLatencyCache ProxyLatencyCache,
+	authCacheInvalidator APIKeyAuthCacheInvalidator,
+	entClient *dbent.Client,
+	settingService *SettingService,
+	defaultSubAssigner DefaultSubscriptionAssigner,
+	userSubRepo UserSubscriptionRepository,
+	privacyClientFactory PrivacyClientFactory,
+	runtimeBlocker AccountRuntimeBlocker,
+	affiliateService *AffiliateService,
+	compositeRouteRepo CompositeModelRouteRepository,
+	compositeResolver *CompositeRouteResolver,
+	channelCacheInvalidator ChannelCacheInvalidator,
+	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	pricingService *PricingService,
+) AdminService {
+	svc := NewAdminService(
+		cfg, userRepo, groupRepo, accountRepo, proxyRepo, apiKeyRepo, redeemCodeRepo,
+		userGroupRateRepo, userRPMCache, billingCacheService, proxyProber, proxyLatencyCache,
+		authCacheInvalidator, entClient, settingService, defaultSubAssigner, userSubRepo,
+		privacyClientFactory, runtimeBlocker, affiliateService, compositeRouteRepo,
+		compositeResolver, channelCacheInvalidator, userPlatformQuotaRepo,
+	)
+	if impl, ok := svc.(*adminServiceImpl); ok && pricingService != nil {
+		impl.SetPricingInventoryTrigger(pricingService.TriggerInventoryReconcile)
+	}
+	return svc
 }
 
 // ProvideUpdateService creates UpdateService with BuildInfo
@@ -883,7 +932,7 @@ var ProviderSet = wire.NewSet(
 	NewBillingService,
 	ProvideBillingCacheService,
 	NewAnnouncementService,
-	NewAdminService,
+	ProvideAdminService,
 	NewGatewayService,
 	NewOpenAIGatewayService,
 	ProvideImageStorageSettingService,

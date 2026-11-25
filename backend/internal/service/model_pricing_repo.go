@@ -9,9 +9,14 @@ const (
 	PricingOverrideScopeDefault = "default"
 	PricingOverrideScopeChannel = "channel"
 	PricingOverrideScopeGroup   = "group"
+
+	// PricingMissingChannelID is the sentinel channel_id persisted for active system models
+	// that currently have no pricing entry in models.dev (pricing_missing = true, prices = NULL).
+	PricingMissingChannelID = "__missing__"
 )
 
-// ModelPricingCatalogRecord represents one synced models.dev pricing row in PostgreSQL.
+// ModelPricingCatalogRecord represents one active-model pricing row in PostgreSQL.
+// Nullable token prices distinguish NULL (missing/unset) from explicit 0 (free).
 type ModelPricingCatalogRecord struct {
 	ChannelID                     string
 	RawModelID                    string
@@ -22,10 +27,11 @@ type ModelPricingCatalogRecord struct {
 	ReleaseDate                   string
 	Status                        string
 	Mode                          string
-	InputPerMillion               float64
-	OutputPerMillion              float64
-	CacheReadPerMillion           float64
-	CacheWritePerMillion          float64
+	PricingMissing                bool
+	InputPerMillion               *float64
+	OutputPerMillion              *float64
+	CacheReadPerMillion           *float64
+	CacheWritePerMillion          *float64
 	CacheWriteExplicit            bool
 	CacheWrite1hPerMillion        *float64
 	CacheStoragePerMillionPerHour float64
@@ -64,7 +70,7 @@ type ModelPricingOverrideKey struct {
 	ModelID string
 }
 
-// ModelPricingRepository persists the synced models.dev catalog and scoped overrides/locks in PostgreSQL.
+// ModelPricingRepository persists the active models.dev catalog and scoped overrides/locks in PostgreSQL.
 type ModelPricingRepository interface {
 	ListCatalogEntries(ctx context.Context) ([]ModelPricingCatalogRecord, error)
 	ListOverrides(ctx context.Context) ([]ModelPricingOverrideRecord, error)

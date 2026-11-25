@@ -111,7 +111,7 @@ func TestGPT62PricingAtRequestTime(t *testing.T) {
 		if model == "gpt-6.2-astra" {
 			unit = 8e-6
 		}
-		for name, svc := range map[string]*BillingService{"fallback": newTestBillingService(), "catalog fallback": NewBillingService(nil, newStubPricingServiceFromJSON(t, `{"other":{"input_cost_per_token":1}}`))} {
+		for name, svc := range map[string]*BillingService{"fallback": newTestBillingService(), "catalog fallback": NewBillingService(nil, newStubPricingServiceFromCatalogMap(map[string]*CatalogModelPricing{"other": {InputCostPerToken: 1}}))} {
 			t.Run(model+name, func(t *testing.T) {
 				for _, resolver := range []*ModelPricingResolver{nil, NewModelPricingResolver(nil, svc)} {
 					enabled := true
