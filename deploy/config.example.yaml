@@ -1128,10 +1128,13 @@ plugins:
 # =============================================================================
 pricing:
   # models.dev API URL (default: https://models.dev/api.json)
+  # Synced catalog entries and custom overrides/locks are persisted in PostgreSQL
+  # (tables: model_pricing_catalog_entries, model_pricing_overrides).
   # models.dev API 地址（默认：https://models.dev/api.json）
+  # 同步后的目录价格及自定义改价/锁全部持久化在 PostgreSQL 表中。
   models_dev_url: "https://models.dev/api.json"
-  # Local data directory for caching models_dev_catalog.json
-  # 本地缓存目录（缓存 models_dev_catalog.json）
+  # Deprecated: pricing catalog is now stored in PostgreSQL instead of local disk files.
+  # 已废弃：定价目录现已全量存储于 PostgreSQL，不再写入本地磁盘缓存文件。
   data_dir: "./data"
   # Enable periodic automatic sync from models.dev (can also be toggled in Admin -> Model Pricing)
   # 是否启用定时自动同步（也可在管理后台「模型定价」页面动态修改）

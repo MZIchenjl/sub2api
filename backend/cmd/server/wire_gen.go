@@ -112,7 +112,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	schedulerOutboxRepository := repository.NewSchedulerOutboxRepository(db)
 	schedulerSnapshotService := service.ProvideSchedulerSnapshotService(schedulerCache, schedulerOutboxRepository, accountRepository, groupRepository, configConfig)
 	pricingRemoteClient := repository.ProvidePricingRemoteClient(configConfig)
-	pricingService, err := service.ProvidePricingService(configConfig, pricingRemoteClient, settingRepository)
+	modelPricingRepository := repository.NewModelPricingRepository(db)
+	pricingService, err := service.ProvidePricingService(configConfig, pricingRemoteClient, settingRepository, modelPricingRepository)
 	if err != nil {
 		return nil, err
 	}

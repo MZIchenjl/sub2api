@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 
@@ -259,9 +258,10 @@ func TestNormalizeOriginalModelID(t *testing.T) {
 	}
 }
 
-func TestModelsDevSyncFiltersOnlySupportedModelsAndSavesSlimCache(t *testing.T) {
+func TestModelsDevSyncFiltersOnlySupportedModelsAndPersistsToDB(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
+	pricingRepo := newMemoryModelPricingRepo()
 	svc := NewPricingService(&config.Config{
 		Pricing: config.PricingConfig{
 			DataDir:           dataDir,
@@ -270,6 +270,7 @@ func TestModelsDevSyncFiltersOnlySupportedModelsAndSavesSlimCache(t *testing.T) 
 			SyncIntervalHours: 24,
 		},
 	}, &stubSyncClient{body: []byte(supportedModelsDevSample)})
+	svc.SetModelPricingRepository(pricingRepo)
 
 	status, err := svc.SyncNow(ctx)
 	require.NoError(t, err)
@@ -282,28 +283,39 @@ func TestModelsDevSyncFiltersOnlySupportedModelsAndSavesSlimCache(t *testing.T) 
 	require.Nil(t, svc.GetModelPricing("llama-4-scout"))
 	require.Nil(t, svc.GetModelPricing("beam-free"))
 
-	// Slim disk cache must NOT contain unrelated providers/models
-	diskBytes, err := os.ReadFile(filepath.Join(dataDir, modelsDevCatalogFileName))
+	// DB catalog rows must ONLY contain supported providers/models and no disk files should be created
+	rows, err := pricingRepo.ListCatalogEntries(ctx)
 	require.NoError(t, err)
-	require.NotContains(t, string(diskBytes), "openrouter")
-	require.NotContains(t, string(diskBytes), "nova-pro")
-	require.NotContains(t, string(diskBytes), "llama-4-scout")
-	require.Contains(t, string(diskBytes), "amazon-bedrock")
-	require.Contains(t, string(diskBytes), "google-vertex-anthropic")
+	require.NotEmpty(t, rows)
+	channels := make(map[string]bool)
+	for _, r := range rows {
+		channels[r.ChannelID] = true
+		require.NotEqual(t, "openrouter", r.ChannelID)
+		require.NotContains(t, r.RawModelID, "nova-pro")
+		require.NotContains(t, r.RawModelID, "llama-4-scout")
+		require.NotContains(t, r.RawModelID, "beam-free")
+	}
+	require.True(t, channels["amazon-bedrock"])
+	require.True(t, channels["google-vertex-anthropic"])
+
+	diskEntries, err := os.ReadDir(dataDir)
+	require.NoError(t, err)
+	require.Empty(t, diskEntries)
 }
 
 func TestAccountTypeMatchingAndThreeTierPriority(t *testing.T) {
 	ctx := context.Background()
 	repo := newInMemorySettingRepo()
+	pricingRepo := newMemoryModelPricingRepo()
 	svc := NewPricingService(&config.Config{
 		Pricing: config.PricingConfig{
-			DataDir:           t.TempDir(),
 			ModelsDevURL:      DefaultModelsDevURL,
 			AutoSyncEnabled:   false,
 			SyncIntervalHours: 24,
 		},
 	}, nil)
 	svc.SetSettingRepository(repo)
+	svc.SetModelPricingRepository(pricingRepo)
 	require.NoError(t, svc.LoadModelsDevJSON([]byte(supportedModelsDevSample)))
 
 	billingSvc := NewBillingService(&config.Config{}, svc)
@@ -433,8 +445,9 @@ func TestAccountTypeMatchingAndThreeTierPriority(t *testing.T) {
 	require.InDelta(t, 4.0e-6, resG10AfterReset.BasePricing.InputPricePerToken, 1e-12)
 
 	// Reload persisted state into a fresh PricingService instance -> overrides survive restart
-	svc2 := NewPricingService(&config.Config{Pricing: config.PricingConfig{DataDir: t.TempDir()}}, nil)
+	svc2 := NewPricingService(&config.Config{}, nil)
 	svc2.SetSettingRepository(repo)
+	svc2.SetModelPricingRepository(pricingRepo)
 	svc2.loadPersistedState(ctx)
 	require.NoError(t, svc2.LoadModelsDevJSON([]byte(supportedModelsDevSample)))
 	require.InDelta(t, 4.0e-6, svc2.GetModelPricing("claude-opus-5").InputCostPerToken, 1e-12)
