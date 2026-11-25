@@ -27,6 +27,7 @@ export interface PricingSyncStatus {
   channel_override_count: number
   locked_channel_count: number
   unlocked_custom_count: number
+  missing_pricing_count: number
   group_override_counts: Record<string, number>
   cache_loaded: boolean
 }
@@ -68,6 +69,7 @@ export type ModelPricingSource =
   | 'default_custom'
   | 'inherited_default'
   | 'group_custom'
+  | 'missing_pricing'
 
 export interface ModelPricingListItem {
   model_id: string
@@ -81,6 +83,7 @@ export interface ModelPricingListItem {
   is_default_modified: boolean
   is_default_locked: boolean
   is_custom_only: boolean
+  is_pricing_missing: boolean
   default_channel_id?: string
   default_channel_name?: string
   channel_prices: AccountChannelPriceEntry[]
@@ -105,7 +108,7 @@ export interface ModelPricingListParams {
   group_id?: number | null
   platform?: string
   search?: string
-  filter?: 'all' | 'overridden' | 'custom' | 'locked'
+  filter?: 'all' | 'overridden' | 'custom' | 'locked' | 'missing'
   page?: number
   page_size?: number
 }

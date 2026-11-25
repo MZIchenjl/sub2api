@@ -235,7 +235,8 @@ func TestPricingStartupBackgroundSyncUpdatesDatabaseWithoutDiskFiles(t *testing.
 	require.Len(t, rows, 1)
 	require.Equal(t, "anthropic", rows[0].ChannelID)
 	require.Equal(t, "claude-opus-5", rows[0].ModelID)
-	require.InDelta(t, 4.0, rows[0].InputPerMillion, 1e-9)
+	require.NotNil(t, rows[0].InputPerMillion)
+	require.InDelta(t, 4.0, *rows[0].InputPerMillion, 1e-9)
 
 	// No disk cache files created
 	entries, err := os.ReadDir(dir)

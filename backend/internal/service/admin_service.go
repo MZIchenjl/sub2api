@@ -729,6 +729,21 @@ type adminServiceImpl struct {
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	// 分组平台变更后用来失效渠道缓存；可为 nil（缓存会在 TTL 到期后自然重建）
 	channelCacheInvalidator ChannelCacheInvalidator
+	// 账号或模型变更后触发定价目录按在用模型集合对账；可为 nil
+	pricingInventoryTrigger func()
+}
+
+func (s *adminServiceImpl) SetPricingInventoryTrigger(fn func()) {
+	if s == nil {
+		return
+	}
+	s.pricingInventoryTrigger = fn
+}
+
+func (s *adminServiceImpl) notifyPricingInventoryChanged() {
+	if s != nil && s.pricingInventoryTrigger != nil {
+		s.pricingInventoryTrigger()
+	}
 }
 
 // ChannelCacheInvalidator 失效渠道缓存。

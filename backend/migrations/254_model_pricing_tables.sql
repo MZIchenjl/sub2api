@@ -1,6 +1,7 @@
 -- 254_model_pricing_tables.sql
--- Store synced models.dev pricing catalog entries and scoped custom overrides / price locks
--- directly in PostgreSQL tables instead of local disk JSON cache + monolithic settings blob.
+-- Store active-inventory-driven models.dev pricing entries and scoped custom overrides / locks
+-- directly in PostgreSQL tables. Nullable price columns distinguish NULL (pricing missing/unset)
+-- from explicit 0 (free).
 
 CREATE TABLE IF NOT EXISTS model_pricing_catalog_entries (
     channel_id VARCHAR(64) NOT NULL,
@@ -12,10 +13,11 @@ CREATE TABLE IF NOT EXISTS model_pricing_catalog_entries (
     release_date VARCHAR(32) NOT NULL DEFAULT '',
     status VARCHAR(32) NOT NULL DEFAULT '',
     mode VARCHAR(32) NOT NULL DEFAULT 'chat',
-    input_per_million NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    output_per_million NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    cache_read_per_million NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    cache_write_per_million NUMERIC(18, 8) NOT NULL DEFAULT 0,
+    pricing_missing BOOLEAN NOT NULL DEFAULT FALSE,
+    input_per_million NUMERIC(18, 8),
+    output_per_million NUMERIC(18, 8),
+    cache_read_per_million NUMERIC(18, 8),
+    cache_write_per_million NUMERIC(18, 8),
     cache_write_explicit BOOLEAN NOT NULL DEFAULT FALSE,
     cache_write_1h_per_million NUMERIC(18, 8),
     cache_storage_per_million_per_hour NUMERIC(18, 8) NOT NULL DEFAULT 0,

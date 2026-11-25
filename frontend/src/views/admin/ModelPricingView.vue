@@ -187,6 +187,15 @@
                 <Icon name="lock" size="xs" />
                 {{ t('admin.modelPricing.lockedSummary', { count: syncStatus.locked_channel_count }) }}
               </span>
+              <button
+                v-if="syncStatus && syncStatus.missing_pricing_count > 0"
+                type="button"
+                @click="filterByMissingPricing"
+                class="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 font-medium text-rose-700 transition-colors hover:bg-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:hover:bg-rose-900/50"
+              >
+                <Icon name="exclamationCircle" size="xs" />
+                {{ t('admin.modelPricing.missingSummary', { count: syncStatus.missing_pricing_count }) }}
+              </button>
               <span v-if="syncStatus?.meta.last_sync_at">
                 {{ t('admin.modelPricing.lastSyncAt', { time: formatTime(syncStatus.meta.last_sync_at) }) }}
               </span>
@@ -353,7 +362,7 @@
                 {{ t('admin.groups.platforms.' + row.item.platform, platformDisplayName(row.item.platform)) }}
               </span>
               <span
-                v-if="selectedGroupId === 0 && !row.item.is_custom_only"
+                v-if="selectedGroupId === 0 && !row.item.is_custom_only && !row.item.is_pricing_missing"
                 :class="[
                   'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
                   row.item.is_default_locked
@@ -387,21 +396,24 @@
           <!-- Column 3: Input Price -->
           <template #cell-input_price="{ row }">
             <template v-if="row._rowType === 'model'">
-              <div class="font-mono text-sm font-medium text-gray-900 dark:text-white">
-                ${{ formatPrice(row.item.effective_pricing.input_per_million) }}
-              </div>
-              <div
-                v-if="row.item.is_group_overridden && row.item.default_pricing"
-                class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
-              >
-                {{ t('admin.modelPricing.badges.defaultRef', { value: formatPrice(row.item.default_pricing.input_per_million) }) }}
-              </div>
-              <div
-                v-else-if="selectedGroupId === 0 && hasSyncedPriceDiff(row.item.effective_pricing.input_per_million, getDefaultChannelSyncedPricing(row.item)?.input_per_million)"
-                class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
-              >
-                {{ t('admin.modelPricing.badges.syncedRef', { value: formatPrice(getDefaultChannelSyncedPricing(row.item)?.input_per_million) }) }}
-              </div>
+              <span v-if="row.item.is_pricing_missing" class="font-mono text-sm text-gray-400 dark:text-gray-500">—</span>
+              <template v-else>
+                <div class="font-mono text-sm font-medium text-gray-900 dark:text-white">
+                  ${{ formatPrice(row.item.effective_pricing.input_per_million) }}
+                </div>
+                <div
+                  v-if="row.item.is_group_overridden && row.item.default_pricing"
+                  class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
+                >
+                  {{ t('admin.modelPricing.badges.defaultRef', { value: formatPrice(row.item.default_pricing.input_per_million) }) }}
+                </div>
+                <div
+                  v-else-if="selectedGroupId === 0 && hasSyncedPriceDiff(row.item.effective_pricing.input_per_million, getDefaultChannelSyncedPricing(row.item)?.input_per_million)"
+                  class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
+                >
+                  {{ t('admin.modelPricing.badges.syncedRef', { value: formatPrice(getDefaultChannelSyncedPricing(row.item)?.input_per_million) }) }}
+                </div>
+              </template>
             </template>
             <template v-else>
               <div class="font-mono text-xs font-medium text-gray-800 dark:text-gray-100">
@@ -419,21 +431,24 @@
           <!-- Column 4: Output Price -->
           <template #cell-output_price="{ row }">
             <template v-if="row._rowType === 'model'">
-              <div class="font-mono text-sm font-medium text-gray-900 dark:text-white">
-                ${{ formatPrice(row.item.effective_pricing.output_per_million) }}
-              </div>
-              <div
-                v-if="row.item.is_group_overridden && row.item.default_pricing"
-                class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
-              >
-                {{ t('admin.modelPricing.badges.defaultRef', { value: formatPrice(row.item.default_pricing.output_per_million) }) }}
-              </div>
-              <div
-                v-else-if="selectedGroupId === 0 && hasSyncedPriceDiff(row.item.effective_pricing.output_per_million, getDefaultChannelSyncedPricing(row.item)?.output_per_million)"
-                class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
-              >
-                {{ t('admin.modelPricing.badges.syncedRef', { value: formatPrice(getDefaultChannelSyncedPricing(row.item)?.output_per_million) }) }}
-              </div>
+              <span v-if="row.item.is_pricing_missing" class="font-mono text-sm text-gray-400 dark:text-gray-500">—</span>
+              <template v-else>
+                <div class="font-mono text-sm font-medium text-gray-900 dark:text-white">
+                  ${{ formatPrice(row.item.effective_pricing.output_per_million) }}
+                </div>
+                <div
+                  v-if="row.item.is_group_overridden && row.item.default_pricing"
+                  class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
+                >
+                  {{ t('admin.modelPricing.badges.defaultRef', { value: formatPrice(row.item.default_pricing.output_per_million) }) }}
+                </div>
+                <div
+                  v-else-if="selectedGroupId === 0 && hasSyncedPriceDiff(row.item.effective_pricing.output_per_million, getDefaultChannelSyncedPricing(row.item)?.output_per_million)"
+                  class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
+                >
+                  {{ t('admin.modelPricing.badges.syncedRef', { value: formatPrice(getDefaultChannelSyncedPricing(row.item)?.output_per_million) }) }}
+                </div>
+              </template>
             </template>
             <template v-else>
               <div class="font-mono text-xs font-medium text-gray-800 dark:text-gray-100">
@@ -451,7 +466,8 @@
           <!-- Column 5: Cache Read -->
           <template #cell-cache_read="{ row }">
             <template v-if="row._rowType === 'model'">
-              <span class="font-mono text-sm text-gray-700 dark:text-gray-300">
+              <span v-if="row.item.is_pricing_missing" class="font-mono text-sm text-gray-400 dark:text-gray-500">—</span>
+              <span v-else class="font-mono text-sm text-gray-700 dark:text-gray-300">
                 ${{ formatPrice(row.item.effective_pricing.cache_read_per_million) }}
               </span>
             </template>
@@ -465,15 +481,18 @@
           <!-- Column 6: Cache Write -->
           <template #cell-cache_write="{ row }">
             <template v-if="row._rowType === 'model'">
-              <div class="font-mono text-sm text-gray-700 dark:text-gray-300">
-                ${{ formatPrice(row.item.effective_pricing.cache_write_per_million) }}
-              </div>
-              <div
-                v-if="row.item.effective_pricing.cache_write_1h_per_million !== undefined && row.item.effective_pricing.cache_write_1h_per_million !== null"
-                class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
-              >
-                {{ t('admin.modelPricing.badges.cache1h', { value: formatPrice(row.item.effective_pricing.cache_write_1h_per_million) }) }}
-              </div>
+              <span v-if="row.item.is_pricing_missing" class="font-mono text-sm text-gray-400 dark:text-gray-500">—</span>
+              <template v-else>
+                <div class="font-mono text-sm text-gray-700 dark:text-gray-300">
+                  ${{ formatPrice(row.item.effective_pricing.cache_write_per_million) }}
+                </div>
+                <div
+                  v-if="row.item.effective_pricing.cache_write_1h_per_million !== undefined && row.item.effective_pricing.cache_write_1h_per_million !== null"
+                  class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
+                >
+                  {{ t('admin.modelPricing.badges.cache1h', { value: formatPrice(row.item.effective_pricing.cache_write_1h_per_million) }) }}
+                </div>
+              </template>
             </template>
             <template v-else>
               <div class="font-mono text-xs text-gray-700 dark:text-gray-300">
@@ -492,7 +511,7 @@
           <template #cell-actions="{ row }">
             <div v-if="row._rowType === 'model'" class="flex items-center gap-1">
               <button
-                v-if="selectedGroupId === 0 && !row.item.is_custom_only"
+                v-if="selectedGroupId === 0 && !row.item.is_custom_only && !row.item.is_pricing_missing"
                 type="button"
                 :disabled="isChannelLockLoading(row.item.model_id, row.item.default_channel_id || '')"
                 @click="toggleDefaultLock(row.item)"
@@ -1041,7 +1060,7 @@ const pageSize = ref(50)
 
 const selectedGroupId = ref<number>(0)
 const selectedPlatform = ref<string>('all')
-const statusFilter = ref<'all' | 'overridden' | 'custom' | 'locked'>('all')
+const statusFilter = ref<'all' | 'overridden' | 'custom' | 'locked' | 'missing'>('all')
 const searchQuery = ref('')
 
 // Expanded model IDs for Level 2 channel sub-rows
@@ -1179,6 +1198,7 @@ const editPlatformOptions = computed(() =>
 
 const statusFilterOptions = computed(() => [
   { value: 'all', label: t('admin.modelPricing.filterAll') },
+  { value: 'missing', label: t('admin.modelPricing.filterMissing') },
   { value: 'overridden', label: t('admin.modelPricing.filterOverridden') },
   { value: 'custom', label: t('admin.modelPricing.filterCustom') },
   { value: 'locked', label: t('admin.modelPricing.filterLocked') }
@@ -1319,6 +1339,11 @@ function handleFilterChange() {
   void loadModels()
 }
 
+function filterByMissingPricing() {
+  statusFilter.value = 'missing'
+  handleFilterChange()
+}
+
 function handlePageChange(nextPage: number) {
   page.value = nextPage
   void loadModels()
@@ -1348,6 +1373,8 @@ function formatTime(iso: string): string {
 
 function sourceBadgeClass(source: ModelPricingSource): string {
   switch (source) {
+    case 'missing_pricing':
+      return 'inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300'
     case 'group_custom':
       return 'inline-flex items-center rounded-full bg-primary-100 px-2 py-0.5 text-[11px] font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300'
     case 'default_custom':

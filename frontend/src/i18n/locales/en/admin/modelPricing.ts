@@ -1,7 +1,7 @@
 export default {
   modelPricing: {
     title: 'Model Pricing',
-    description: 'Sync pricing only for system-supported models, expand rows to edit or lock per-channel prices, and configure per-group overrides',
+    description: 'Maintains pricing strictly for models used by active accounts: auto-fills newly added models, prunes unused ones, and distinguishes missing pricing from explicit $0',
     unitHint: 'Unit: USD / 1M tokens ($/MTok)',
     priorityHint: 'Precedence: Group Price > Matched Channel Price (auto by account type) > Default Channel Price',
     searchPlaceholder: 'Search model ID, name or channel...',
@@ -14,12 +14,14 @@ export default {
     filterOverridden: 'Overridden',
     filterCustom: 'Custom Only',
     filterLocked: 'Locked Channels',
+    filterMissing: 'Missing Pricing',
     syncSettings: 'Sync Settings',
     syncNow: 'Sync Now',
     syncing: 'Syncing...',
     addCustomModel: 'Add Custom Model',
-    syncSummary: '{models} supported models · {channels} channels cached',
+    syncSummary: '{models} active models · {channels} channels cached',
     lockedSummary: '{count} locked channel prices',
+    missingSummary: '{count} models missing pricing',
     autoSyncOn: 'Auto sync: every {hours}h (skips locked channels)',
     autoSyncOff: 'Auto sync off',
     lastSyncAt: 'Last synced: {time}',
@@ -39,7 +41,8 @@ export default {
       default_auto: 'Default Channel',
       default_custom: 'Default Custom',
       inherited_default: 'Inherited Default',
-      group_custom: 'Group Price'
+      group_custom: 'Group Price',
+      missing_pricing: 'Missing Pricing'
     },
     badges: {
       defaultChannel: 'Default',
@@ -72,8 +75,8 @@ export default {
       collapseChannels: 'Collapse channel prices'
     },
     empty: {
-      title: 'No matching model prices',
-      description: 'Click "Sync Now" to fetch pricing for system-supported models from models.dev, or add a custom model.'
+      title: 'No active model prices yet',
+      description: 'The pricing table starts empty; once accounts and models are added, pricing is synced automatically from models.dev or via "Sync Now".'
     },
     editModal: {
       createTitle: 'Add Custom Model Pricing',

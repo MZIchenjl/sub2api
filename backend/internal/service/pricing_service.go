@@ -50,6 +50,132 @@ var (
 	bedrockVendorPrefixRe  = regexp.MustCompile(`^(?:anthropic|amazon|meta|mistral|cohere|deepseek|google|openai|qwen|xai|moonshot|zhipu|minimax|ai21|stability|twelvelabs|writer|nvidia)\.`)
 	bedrockVersionSuffixRe = regexp.MustCompile(`-v\d+(?::\d+)?$`)
 	vertexDateSuffixRe     = regexp.MustCompile(`@(\d{8})$`)
+
+	// Official static fallbacks preserved from upstream v0.2.25 for newer models whose
+	// catalog entries may lag behind release.
+	openAIGPTImage25FallbackPricing = &CatalogModelPricing{
+		InputCostPerToken:            5e-06,
+		CacheReadInputTokenCost:      1.25e-06,
+		InputCostPerImageToken:       8e-06,
+		CacheReadInputImageTokenCost: 2e-06,
+		OutputCostPerImageToken:      3e-05,
+		Provider:                     "openai",
+		Mode:                         "image_generation",
+		SupportsPromptCaching:        true,
+	}
+	openAIGPT61TerraFallbackPricing = &CatalogModelPricing{
+		InputCostPerToken:                   1e-6,
+		InputCostPerTokenPriority:           2e-6,
+		OutputCostPerToken:                  5e-6,
+		OutputCostPerTokenPriority:          10e-6,
+		CacheCreationInputTokenCost:         1.25e-6,
+		CacheCreationInputTokenCostPriority: 2.5e-6,
+		CacheReadInputTokenCost:             0.05e-6,
+		CacheReadInputTokenCostPriority:     0.1e-6,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		Provider:                            "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	openAIGPT62AstraFallbackPricing = &CatalogModelPricing{
+		InputCostPerToken:                   8e-6,
+		InputCostPerTokenPriority:           16e-6,
+		OutputCostPerToken:                  40e-6,
+		OutputCostPerTokenPriority:          80e-6,
+		CacheCreationInputTokenCost:         10e-6,
+		CacheCreationInputTokenCostPriority: 20e-6,
+		CacheReadInputTokenCost:             0.4e-6,
+		CacheReadInputTokenCostPriority:     0.8e-6,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		Provider:                            "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	openAIGPT61SolFallbackPricing = &CatalogModelPricing{
+		InputCostPerToken:                   2e-6,
+		InputCostPerTokenPriority:           4e-6,
+		OutputCostPerToken:                  10e-6,
+		OutputCostPerTokenPriority:          20e-6,
+		CacheCreationInputTokenCost:         2.5e-6,
+		CacheCreationInputTokenCostPriority: 5e-6,
+		CacheReadInputTokenCost:             0.1e-6,
+		CacheReadInputTokenCostPriority:     0.2e-6,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		Provider:                            "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	openAIGPT6SolFallbackPricing = &CatalogModelPricing{
+		InputCostPerToken:                   2e-6,
+		InputCostPerTokenPriority:           4e-6,
+		OutputCostPerToken:                  10e-6,
+		OutputCostPerTokenPriority:          20e-6,
+		CacheCreationInputTokenCost:         2.5e-6,
+		CacheCreationInputTokenCostPriority: 5e-6,
+		CacheReadInputTokenCost:             0.2e-6,
+		CacheReadInputTokenCostPriority:     0.4e-6,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		Provider:                            "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	openAIGPT6LunaFallbackPricing = &CatalogModelPricing{
+		InputCostPerToken:                   0.1e-6,
+		InputCostPerTokenPriority:           0.2e-6,
+		OutputCostPerToken:                  0.5e-6,
+		OutputCostPerTokenPriority:          1e-6,
+		CacheCreationInputTokenCost:         0.125e-6,
+		CacheCreationInputTokenCostPriority: 0.25e-6,
+		CacheReadInputTokenCost:             0.01e-6,
+		CacheReadInputTokenCostPriority:     0.02e-6,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		Provider:                            "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	claude52FallbackPricing = &CatalogModelPricing{
+		InputCostPerToken: 8e-6, OutputCostPerToken: 40e-6,
+		CacheCreationInputTokenCost: 10e-6, CacheCreationInputTokenCostAbove1hr: 16e-6,
+		CacheReadInputTokenCost: 0.2e-6,
+		Provider:                "anthropic", Mode: "chat", SupportsPromptCaching: true,
+	}
+	claudeOpus55FallbackPricing = &CatalogModelPricing{
+		InputCostPerToken: 4e-6, OutputCostPerToken: 20e-6,
+		CacheCreationInputTokenCost: 5e-6, CacheCreationInputTokenCostAbove1hr: 8e-6,
+		CacheReadInputTokenCost:   0.2e-6,
+		InputCostPerTokenPriority: 8e-6, OutputCostPerTokenPriority: 40e-6,
+		CacheCreationInputTokenCostPriority: 10e-6, CacheReadInputTokenCostPriority: 0.4e-6,
+		SupportsServiceTier: true, Provider: "anthropic", Mode: "chat", SupportsPromptCaching: true,
+	}
+	claudeSonnet55FallbackPricing = &CatalogModelPricing{
+		InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6,
+		CacheCreationInputTokenCost: 2.5e-6, CacheCreationInputTokenCostAbove1hr: 4e-6,
+		CacheReadInputTokenCost: 0.1e-6,
+		Provider:                "anthropic", Mode: "chat", SupportsPromptCaching: true,
+	}
+	claudeHaiku55FallbackPricing = &CatalogModelPricing{
+		InputCostPerToken: 1e-7, OutputCostPerToken: 5e-7,
+		CacheCreationInputTokenCost: 1.25e-7, CacheCreationInputTokenCostAbove1hr: 2e-7,
+		CacheReadInputTokenCost:        1e-8,
+		LongContextInputTokenThreshold: 100000,
+		LongContextInputCostMultiplier: 5, LongContextOutputCostMultiplier: 5,
+		Provider: "anthropic", Mode: "chat", SupportsPromptCaching: true,
+	}
 )
 
 // tokenPriceOverrides tracks explicit nonnegative rates from custom pricing overrides.
@@ -381,6 +507,7 @@ type PricingSyncStatus struct {
 	ChannelOverrideCount int                 `json:"channel_override_count"`
 	LockedChannelCount   int                 `json:"locked_channel_count"`
 	UnlockedCustomCount  int                 `json:"unlocked_custom_count"`
+	MissingPricingCount  int                 `json:"missing_pricing_count"`
 	GroupOverrideCounts  map[string]int      `json:"group_override_counts"`
 	CacheLoaded          bool                `json:"cache_loaded"`
 }
@@ -444,7 +571,7 @@ type AccountChannelPriceEntry struct {
 	score         int
 }
 
-// SupportedModelEntry holds all cached channel prices for one system-supported model ID.
+// SupportedModelEntry holds all cached channel prices for one active/supported model ID.
 type SupportedModelEntry struct {
 	ModelID            string
 	DisplayName        string
@@ -452,6 +579,7 @@ type SupportedModelEntry struct {
 	ReleaseDate        string
 	Platform           string   // primary system platform (anthropic / openai / gemini / grok / kimi / zhipu / deepseek / minimax / opencode_go / command_code / cline / typesafe)
 	Platforms          []string // all system platforms that support this model (including antigravity for claude/gemini)
+	PricingMissing     bool     // true when active in accounts but absent from models.dev (prices are NULL, not 0)
 	DefaultChannelID   string
 	DefaultChannelName string
 	DefaultPricing     TokenPricingPerMillion
@@ -474,7 +602,7 @@ type ModelPricingListQuery struct {
 	GroupPlatform string // resolved from system GroupRepository when GroupID > 0
 	Platform      string // optional platform filter (used when GroupID == 0 or composite group)
 	Search        string
-	Filter        string // "all" | "overridden" | "custom"
+	Filter        string // "all" | "overridden" | "custom" | "locked" | "missing"
 	Page          int
 	PageSize      int
 }
@@ -487,11 +615,12 @@ type ModelPricingListItem struct {
 	Platforms            []string                   `json:"platforms"`
 	Family               string                     `json:"family,omitempty"`
 	ReleaseDate          string                     `json:"release_date,omitempty"`
-	Source               string                     `json:"source"` // "default_auto" | "default_custom" | "inherited_default" | "group_custom"
+	Source               string                     `json:"source"` // "default_auto" | "default_custom" | "inherited_default" | "group_custom" | "missing_pricing"
 	IsGroupOverridden    bool                       `json:"is_group_overridden"`
 	IsDefaultModified    bool                       `json:"is_default_modified"`
 	IsDefaultLocked      bool                       `json:"is_default_locked"`
 	IsCustomOnly         bool                       `json:"is_custom_only"`
+	IsPricingMissing     bool                       `json:"is_pricing_missing"`
 	DefaultChannelID     string                     `json:"default_channel_id,omitempty"`
 	DefaultChannelName   string                     `json:"default_channel_name,omitempty"`
 	ChannelPrices        []AccountChannelPriceEntry `json:"channel_prices"`
@@ -513,19 +642,23 @@ type ModelPricingListResult struct {
 	Platforms     []SupportedPlatformSummary `json:"platforms"`
 }
 
-// PricingService 动态价格服务（基于 PostgreSQL 持久化的 models.dev 目录 + 账户类型自动匹配渠道 + 独立改价/锁/分组覆盖）
+// PricingService 动态价格服务（基于 PostgreSQL 持久化 + 在用模型驱动同步 + 账户类型自动匹配渠道 + 独立改价/锁/分组覆盖）
 type PricingService struct {
-	cfg              *config.Config
-	remoteClient     PricingRemoteClient
-	settingRepo      SettingRepository
-	modelPricingRepo ModelPricingRepository
+	cfg               *config.Config
+	remoteClient      PricingRemoteClient
+	settingRepo       SettingRepository
+	modelPricingRepo  ModelPricingRepository
+	inventoryProvider PricingInventoryProvider
 
 	mu                   sync.RWMutex
 	syncMu               sync.Mutex
 	syncConfig           PricingSyncConfig
 	syncMeta             PricingSyncMetadata
 	overrides            PricingOverridesState
-	models               map[string]*SupportedModelEntry // normalized original model ID -> system-supported model entry
+	catalogRecords       []ModelPricingCatalogRecord
+	upstreamSnapshot     []ModelPricingCatalogRecord
+	upstreamFetchedAt    time.Time
+	models               map[string]*SupportedModelEntry // normalized original model ID -> active/supported model entry
 	providerModels       map[string][]string             // models.dev provider_id -> sorted original model IDs
 	platformSummaries    []SupportedPlatformSummary
 	effectiveDefaultData map[string]*CatalogModelPricing // materialized default effective catalog for hot path
@@ -534,6 +667,7 @@ type PricingService struct {
 
 	stopCh           chan struct{}
 	schedulerResetCh chan struct{}
+	reconcileCh      chan struct{}
 	stopOnce         sync.Once
 	wg               sync.WaitGroup
 }
@@ -558,6 +692,7 @@ func NewPricingService(cfg *config.Config, remoteClient PricingRemoteClient) *Pr
 		effectiveDefaultData: make(map[string]*CatalogModelPricing),
 		stopCh:               make(chan struct{}),
 		schedulerResetCh:     make(chan struct{}, 1),
+		reconcileCh:          make(chan struct{}, 1),
 	}
 }
 
@@ -581,6 +716,28 @@ func (s *PricingService) SetModelPricingRepository(repo ModelPricingRepository) 
 	s.mu.Unlock()
 }
 
+// SetInventoryProvider attaches the active model inventory provider so pricing sync only keeps
+// models actually present across non-deleted accounts (empty initial state when no accounts exist).
+func (s *PricingService) SetInventoryProvider(provider PricingInventoryProvider) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.inventoryProvider = provider
+	s.mu.Unlock()
+}
+
+// TriggerInventoryReconcile schedules a coalesced background reconciliation after account or model changes.
+func (s *PricingService) TriggerInventoryReconcile() {
+	if s == nil || s.reconcileCh == nil {
+		return
+	}
+	select {
+	case s.reconcileCh <- struct{}{}:
+	default:
+	}
+}
+
 func defaultSyncConfigFromAppConfig(cfg *config.Config) PricingSyncConfig {
 	out := PricingSyncConfig{
 		AutoSyncEnabled:   true,
@@ -600,7 +757,7 @@ func defaultSyncConfigFromAppConfig(cfg *config.Config) PricingSyncConfig {
 	return out
 }
 
-// Initialize 初始化价格服务：从数据库加载同步配置、已同步定价目录与覆盖/锁 -> 启动定时同步器。
+// Initialize 初始化价格服务：从数据库加载同步配置、已同步定价目录与覆盖/锁 -> 按在用模型集合对账 -> 启动定时同步器。
 func (s *PricingService) Initialize() error {
 	ctx := context.Background()
 	s.loadPersistedState(ctx)
@@ -623,11 +780,37 @@ func (s *PricingService) Initialize() error {
 	s.rebuildEffectiveDefaultLocked()
 	modelCount := len(s.effectiveDefaultData)
 	autoSync := s.syncConfig.AutoSyncEnabled && strings.TrimSpace(s.syncConfig.ModelsDevURL) != ""
+	invProvider := s.inventoryProvider
 	s.mu.Unlock()
 
 	s.startUpdateScheduler()
+	s.startInventoryReconciler()
 
-	if autoSync && s.remoteClient != nil && (!cacheLoaded || cacheStale) {
+	if invProvider != nil {
+		// Inventory-driven startup: empty system stays cleanly empty (no unnecessary upstream sync).
+		// If active models exist and differ from DB catalog or cache is stale, reconcile asynchronously.
+		if inv, err := invProvider.CollectActiveModelInventory(ctx); err == nil && inv != nil {
+			if len(inv.Models) == 0 {
+				if cacheLoaded || s.hasAnyOverrides() {
+					_ = s.ReconcileWithInventory(ctx)
+					modelCount = 0
+					cacheLoaded = false
+				}
+			} else if s.inventoryNeedsReconcile(inv) || (autoSync && s.remoteClient != nil && cacheStale) {
+				s.wg.Add(1)
+				go func() {
+					defer s.wg.Done()
+					syncCtx, cancel := s.backgroundSyncContext(60 * time.Second)
+					defer cancel()
+					if err := s.ReconcileWithInventory(syncCtx); err != nil && !errors.Is(err, context.Canceled) {
+						logger.LegacyPrintf("service.pricing", "[Pricing] Initial inventory pricing reconcile failed: %v", err)
+					}
+				}()
+			}
+		} else if err != nil {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to inspect active model inventory on startup: %v", err)
+		}
+	} else if autoSync && s.remoteClient != nil && (!cacheLoaded || cacheStale) {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
@@ -641,6 +824,96 @@ func (s *PricingService) Initialize() error {
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Service initialized (models.dev db_loaded=%t, effective_models=%d)", cacheLoaded, modelCount)
 	return nil
+}
+
+func (s *PricingService) startInventoryReconciler() {
+	if s == nil {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		for {
+			select {
+			case <-s.reconcileCh:
+				// Brief debounce to coalesce rapid bulk account edits.
+				timer := time.NewTimer(250 * time.Millisecond)
+				select {
+				case <-timer.C:
+				case <-s.stopCh:
+					timer.Stop()
+					return
+				}
+				// Drain any additional coalesced signal accumulated during debounce.
+				select {
+				case <-s.reconcileCh:
+				default:
+				}
+				ctx, cancel := s.backgroundSyncContext(60 * time.Second)
+				if err := s.ReconcileWithInventory(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.LegacyPrintf("service.pricing", "[Pricing] Background inventory reconcile failed: %v", err)
+				}
+				cancel()
+			case <-s.stopCh:
+				return
+			}
+		}
+	}()
+}
+
+func (s *PricingService) hasAnyOverrides() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.overrides.Default) > 0 || len(s.overrides.Channels) > 0 || len(s.overrides.Groups) > 0
+}
+
+func (s *PricingService) inventoryNeedsReconcile(inv *ActiveModelInventory) bool {
+	if inv == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(inv.Models) == 0 {
+		return len(s.models) > 0 || len(s.overrides.Default) > 0 || len(s.overrides.Channels) > 0 || len(s.overrides.Groups) > 0
+	}
+	for modelID := range inv.Models {
+		entry := s.models[modelID]
+		if entry == nil {
+			return true
+		}
+		if !entry.PricingMissing {
+			for chID := range inv.ModelChannels[modelID] {
+				if entry.channelByID[chID] == nil {
+					return true
+				}
+			}
+		}
+	}
+	for modelID := range s.models {
+		if _, ok := inv.Models[modelID]; !ok {
+			return true
+		}
+	}
+	for modelID := range s.overrides.Default {
+		if _, ok := inv.Models[modelID]; !ok {
+			return true
+		}
+	}
+	for _, chMap := range s.overrides.Channels {
+		for modelID := range chMap {
+			if _, ok := inv.Models[modelID]; !ok {
+				return true
+			}
+		}
+	}
+	for _, gMap := range s.overrides.Groups {
+		for modelID := range gMap {
+			if _, ok := inv.Models[modelID]; !ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *PricingService) backgroundSyncContext(timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -873,31 +1146,22 @@ func (s *PricingService) loadCatalogFromDB(ctx context.Context) (bool, time.Time
 		}
 	}
 
-	if err := s.applyCatalogRecords(records, false); err != nil {
+	if err := s.applyCatalogRecords(records, nil, false); err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to rebuild catalog from DB records: %v", err)
 		return false, time.Time{}
 	}
 	return true, latestSyncedAt
 }
 
-// LoadModelsDevJSON loads models.dev JSON bytes into memory (filtered to system-supported platforms/models).
-func (s *PricingService) LoadModelsDevJSON(body []byte) error {
-	records, err := extractSupportedModelsDevRecords(body, time.Now())
-	if err != nil {
-		return err
-	}
-	return s.applyCatalogRecords(records, false)
-}
-
-func (s *PricingService) applyCatalogRecords(records []ModelPricingCatalogRecord, updateSyncMeta bool) error {
-	models, providerModels, platformSummaries, channelCount, rawCount, hashStr, err := buildCatalogStateFromRecords(records)
-	if err != nil {
-		return err
-	}
+func (s *PricingService) applyCatalogRecords(records []ModelPricingCatalogRecord, inv *ActiveModelInventory, updateSyncMeta bool) error {
+	models, providerModels, platformSummaries, channelCount, rawCount, hashStr := buildCatalogStateFromRecords(records, inv)
 
 	now := time.Now()
+	copiedRecords := make([]ModelPricingCatalogRecord, len(records))
+	copy(copiedRecords, records)
 
 	s.mu.Lock()
+	s.catalogRecords = copiedRecords
 	s.models = models
 	s.providerModels = providerModels
 	s.platformSummaries = platformSummaries
@@ -918,8 +1182,130 @@ func (s *PricingService) applyCatalogRecords(records []ModelPricingCatalogRecord
 	return nil
 }
 
-// SyncNow fetches models.dev/api.json, filters to system-supported models & channels,
-// skips locked channel prices, updates unlocked entries, and persists everything in PostgreSQL.
+// LoadModelsDevJSON loads models.dev JSON bytes into memory (filtered to system-supported platforms/models).
+func (s *PricingService) LoadModelsDevJSON(body []byte) error {
+	records, err := extractSupportedModelsDevRecords(body, time.Now())
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.upstreamSnapshot = records
+	s.upstreamFetchedAt = time.Now()
+	s.mu.Unlock()
+	return s.applyCatalogRecords(records, nil, false)
+}
+
+// ReconcileWithInventory reconciles stored pricing rows & overrides against the system's current
+// active model inventory:
+//   - Empty inventory -> clears catalog and unused overrides (zero network calls).
+//   - Removed models -> prunes catalog entries AND their overrides (Option A, zero network calls if no new models).
+//   - Newly added models/channels -> matches against cached upstreamSnapshot or fetches models.dev once,
+//     marking unmatched active models with pricing_missing=true (NULL prices).
+func (s *PricingService) ReconcileWithInventory(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	invProvider := s.inventoryProvider
+	s.mu.RUnlock()
+	if invProvider == nil {
+		return nil
+	}
+
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	inv, err := invProvider.CollectActiveModelInventory(ctx)
+	if err != nil {
+		return fmt.Errorf("collect active model inventory: %w", err)
+	}
+	if inv == nil {
+		return nil
+	}
+
+	now := time.Now()
+
+	// Case 1: Empty system (0 active models) -> keep catalog and overrides empty without hitting upstream.
+	if len(inv.Models) == 0 {
+		return s.commitReconciledState(ctx, nil, inv, PricingSyncOverwriteSkipLocked, now, false)
+	}
+
+	// Check whether any active model or active channel is missing from our current catalog.
+	needLookup := false
+	s.mu.RLock()
+	for modelID := range inv.Models {
+		entry := s.models[modelID]
+		if entry == nil {
+			needLookup = true
+			break
+		}
+		if !entry.PricingMissing {
+			for chID := range inv.ModelChannels[modelID] {
+				if entry.channelByID[chID] == nil {
+					needLookup = true
+					break
+				}
+			}
+			if needLookup {
+				break
+			}
+		}
+	}
+	currentRecords := make([]ModelPricingCatalogRecord, len(s.catalogRecords))
+	copy(currentRecords, s.catalogRecords)
+	upstream := s.upstreamSnapshot
+	upstreamAt := s.upstreamFetchedAt
+	interval := time.Duration(s.normalizedSyncIntervalHoursLocked()) * time.Hour
+	rawURL := strings.TrimSpace(s.syncConfig.ModelsDevURL)
+	s.mu.RUnlock()
+
+	// Case 2: Only removals (no new models/channels) -> prune locally in DB without any network call.
+	if !needLookup {
+		pruned := filterCatalogRecordsForInventory(currentRecords, inv, now)
+		return s.commitReconciledState(ctx, pruned, inv, PricingSyncOverwriteSkipLocked, now, false)
+	}
+
+	// Case 3: New active models/channels appeared -> use fresh in-memory upstream snapshot, or fetch models.dev once.
+	fetchedRemote := false
+	if len(upstream) == 0 || time.Since(upstreamAt) >= interval {
+		if s.remoteClient != nil {
+			if rawURL == "" {
+				rawURL = DefaultModelsDevURL
+			}
+			if validatedURL, valErr := s.validatePricingURL(rawURL); valErr == nil {
+				if body, fetchErr := s.remoteClient.FetchPricingJSON(ctx, validatedURL); fetchErr == nil {
+					if parsed, parseErr := extractSupportedModelsDevRecords(body, now); parseErr == nil {
+						upstream = parsed
+						fetchedRemote = true
+						s.mu.Lock()
+						s.upstreamSnapshot = parsed
+						s.upstreamFetchedAt = now
+						s.mu.Unlock()
+					} else {
+						logger.LegacyPrintf("service.pricing", "[Pricing] Reconcile parse models.dev failed: %v", parseErr)
+					}
+				} else {
+					logger.LegacyPrintf("service.pricing", "[Pricing] Reconcile fetch models.dev failed (using existing catalog + missing placeholders): %v", fetchErr)
+				}
+			}
+		}
+	}
+
+	sourceRecords := upstream
+	if len(sourceRecords) == 0 {
+		// Upstream unavailable: preserve existing non-missing catalog rows and mark new unknown models as pricing_missing.
+		sourceRecords = currentRecords
+	}
+	filtered := filterCatalogRecordsForInventory(sourceRecords, inv, now)
+	return s.commitReconciledState(ctx, filtered, inv, PricingSyncOverwriteSkipLocked, now, fetchedRemote)
+}
+
+// SyncNow fetches models.dev/api.json, filters to active models & channels,
+// skips locked channel prices, updates unlocked entries, cleans unused models, and persists everything in PostgreSQL.
 func (s *PricingService) SyncNow(ctx context.Context) (*PricingSyncStatus, error) {
 	return s.SyncNowWithMode(ctx, PricingSyncOverwriteSkipLocked)
 }
@@ -927,7 +1313,7 @@ func (s *PricingService) SyncNow(ctx context.Context) (*PricingSyncStatus, error
 // SyncNowWithMode performs a models.dev sync with explicit overwrite semantics:
 //   - "skip_locked" (default / auto-sync): keeps all locked channel prices untouched; updates unlocked entries.
 //   - "overwrite_all" (manual confirmed overwrite): overwrites all synced channel prices (including locked ones),
-//     while preserving custom-only models and system group overrides.
+//     while preserving system group overrides and overrides for models missing from models.dev.
 func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode string) (*PricingSyncStatus, error) {
 	if s == nil {
 		return nil, errors.New("pricing service is nil")
@@ -949,10 +1335,33 @@ func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode stri
 
 	s.mu.RLock()
 	rawURL := strings.TrimSpace(s.syncConfig.ModelsDevURL)
-	pricingRepo := s.modelPricingRepo
+	invProvider := s.inventoryProvider
 	s.mu.RUnlock()
 	if rawURL == "" {
 		rawURL = DefaultModelsDevURL
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var inv *ActiveModelInventory
+	if invProvider != nil {
+		collected, err := invProvider.CollectActiveModelInventory(ctx)
+		if err != nil {
+			err = fmt.Errorf("collect active model inventory: %w", err)
+			s.recordSyncError(ctx, err)
+			return s.GetSyncStatus(), err
+		}
+		inv = collected
+		if inv != nil && len(inv.Models) == 0 {
+			now := time.Now()
+			if err := s.commitReconciledState(ctx, nil, inv, mode, now, true); err != nil {
+				s.recordSyncError(ctx, err)
+				return s.GetSyncStatus(), err
+			}
+			return s.GetSyncStatus(), nil
+		}
 	}
 
 	validatedURL, err := s.validatePricingURL(rawURL)
@@ -961,10 +1370,7 @@ func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode stri
 		return s.GetSyncStatus(), err
 	}
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Syncing supported models from %s (mode=%s)", validatedURL, mode)
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	logger.LegacyPrintf("service.pricing", "[Pricing] Syncing models from %s (mode=%s)", validatedURL, mode)
 	body, err := s.remoteClient.FetchPricingJSON(ctx, validatedURL)
 	if err != nil {
 		err = fmt.Errorf("fetch models.dev catalog: %w", err)
@@ -973,29 +1379,60 @@ func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode stri
 	}
 
 	now := time.Now()
-	records, err := extractSupportedModelsDevRecords(body, now)
+	upstreamRecords, err := extractSupportedModelsDevRecords(body, now)
 	if err != nil {
 		err = fmt.Errorf("parse models.dev catalog: %w", err)
 		s.recordSyncError(ctx, err)
 		return s.GetSyncStatus(), err
 	}
 
-	models, providerModels, platformSummaries, channelCount, rawCount, hashStr, err := buildCatalogStateFromRecords(records)
-	if err != nil {
-		err = fmt.Errorf("build models.dev catalog: %w", err)
+	s.mu.Lock()
+	s.upstreamSnapshot = upstreamRecords
+	s.upstreamFetchedAt = now
+	s.mu.Unlock()
+
+	finalRecords := filterCatalogRecordsForInventory(upstreamRecords, inv, now)
+	if err := s.commitReconciledState(ctx, finalRecords, inv, mode, now, true); err != nil {
 		s.recordSyncError(ctx, err)
 		return s.GetSyncStatus(), err
 	}
 
-	// Determine which Default & Channel overrides should be removed during sync reconciliation.
-	// System Group overrides (s.overrides.Groups) and custom-only models are always preserved.
+	return s.GetSyncStatus(), nil
+}
+
+// commitReconciledState atomically persists the catalog records and reconciled override deletions
+// into PostgreSQL, then updates in-memory pricing state. Caller must hold s.syncMu.
+func (s *PricingService) commitReconciledState(
+	ctx context.Context,
+	records []ModelPricingCatalogRecord,
+	inv *ActiveModelInventory,
+	mode string,
+	now time.Time,
+	updateSyncMeta bool,
+) error {
+	models, providerModels, platformSummaries, channelCount, rawCount, hashStr := buildCatalogStateFromRecords(records, inv)
+
 	var deleteKeys []ModelPricingOverrideKey
 	skippedLocked := 0
 	overwrittenCount := 0
 
 	s.mu.RLock()
+	pricingRepo := s.modelPricingRepo
 	for modelID, ov := range s.overrides.Default {
-		if models[modelID] == nil {
+		if inv != nil {
+			if _, active := inv.Models[modelID]; !active {
+				// Option A: model is no longer used by any account -> delete its override too.
+				deleteKeys = append(deleteKeys, ModelPricingOverrideKey{
+					Scope:   PricingOverrideScopeDefault,
+					ScopeID: "",
+					ModelID: modelID,
+				})
+				continue
+			}
+		}
+		entry := models[modelID]
+		if entry == nil || entry.PricingMissing {
+			// Active model missing from models.dev (or custom-only in standalone mode): keep user's manual price.
 			continue
 		}
 		if mode == PricingSyncOverwriteAll || !ov.Locked {
@@ -1011,8 +1448,18 @@ func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode stri
 	}
 	for chID, chModels := range s.overrides.Channels {
 		for modelID, ov := range chModels {
+			if inv != nil {
+				if _, active := inv.Models[modelID]; !active {
+					deleteKeys = append(deleteKeys, ModelPricingOverrideKey{
+						Scope:   PricingOverrideScopeChannel,
+						ScopeID: chID,
+						ModelID: modelID,
+					})
+					continue
+				}
+			}
 			entry := models[modelID]
-			if entry == nil || entry.channelByID[chID] == nil {
+			if entry == nil || entry.PricingMissing || entry.channelByID[chID] == nil {
 				continue
 			}
 			if mode == PricingSyncOverwriteAll || !ov.Locked {
@@ -1027,17 +1474,33 @@ func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode stri
 			}
 		}
 	}
+	if inv != nil {
+		for gid, gModels := range s.overrides.Groups {
+			for modelID := range gModels {
+				if _, active := inv.Models[modelID]; !active {
+					// Option A: model is no longer used by any account -> clean group override too.
+					deleteKeys = append(deleteKeys, ModelPricingOverrideKey{
+						Scope:   PricingOverrideScopeGroup,
+						ScopeID: gid,
+						ModelID: modelID,
+					})
+				}
+			}
+		}
+	}
 	s.mu.RUnlock()
 
 	if pricingRepo != nil {
 		if err := pricingRepo.ReplaceCatalogAndReconcileOverrides(ctx, records, deleteKeys); err != nil {
-			err = fmt.Errorf("persist models.dev catalog to DB: %w", err)
-			s.recordSyncError(ctx, err)
-			return s.GetSyncStatus(), err
+			return fmt.Errorf("persist models.dev catalog to DB: %w", err)
 		}
 	}
 
+	copiedRecords := make([]ModelPricingCatalogRecord, len(records))
+	copy(copiedRecords, records)
+
 	s.mu.Lock()
+	s.catalogRecords = copiedRecords
 	s.models = models
 	s.providerModels = providerModels
 	s.platformSummaries = platformSummaries
@@ -1054,18 +1517,27 @@ func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode stri
 					delete(s.overrides.Channels, k.ScopeID)
 				}
 			}
+		case PricingOverrideScopeGroup:
+			if gm := s.overrides.Groups[k.ScopeID]; gm != nil {
+				delete(gm, k.ModelID)
+				if len(gm) == 0 {
+					delete(s.overrides.Groups, k.ScopeID)
+				}
+			}
 		}
 	}
-	syncTime := now
-	s.syncMeta.LastSyncAt = &syncTime
-	s.syncMeta.LastSyncStatus = PricingSyncStatusSuccess
-	s.syncMeta.LastSyncError = ""
 	s.syncMeta.CacheHash = hashStr[:min(16, len(hashStr))]
 	s.syncMeta.ChannelCount = channelCount
 	s.syncMeta.ModelCount = len(models)
 	s.syncMeta.RawEntryCount = rawCount
-	s.syncMeta.LastSkippedLocked = skippedLocked
-	s.syncMeta.LastOverwrittenCount = overwrittenCount
+	if updateSyncMeta {
+		syncTime := now
+		s.syncMeta.LastSyncAt = &syncTime
+		s.syncMeta.LastSyncStatus = PricingSyncStatusSuccess
+		s.syncMeta.LastSyncError = ""
+		s.syncMeta.LastSkippedLocked = skippedLocked
+		s.syncMeta.LastOverwrittenCount = overwrittenCount
+	}
 	s.rebuildEffectiveDefaultLocked()
 	metaCopy := s.syncMeta
 	s.mu.Unlock()
@@ -1074,9 +1546,9 @@ func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode stri
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to persist sync metadata: %v", err)
 	}
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Synced supported models.dev pricing to DB (%d channels, %d models, %d entries, skipped_locked=%d, overwritten=%d)",
+	logger.LegacyPrintf("service.pricing", "[Pricing] Reconciled models.dev pricing in DB (%d channels, %d models, %d entries, skipped_locked=%d, overwritten=%d)",
 		metaCopy.ChannelCount, metaCopy.ModelCount, metaCopy.RawEntryCount, skippedLocked, overwrittenCount)
-	return s.GetSyncStatus(), nil
+	return nil
 }
 
 func (s *PricingService) recordSyncError(ctx context.Context, syncErr error) {
@@ -1138,13 +1610,22 @@ func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 	channelOverrideCount := 0
 	lockedChannelCount := 0
 	unlockedCustomCount := 0
+	missingPricingCount := 0
+
+	for modelID, entry := range s.models {
+		if entry != nil && entry.PricingMissing {
+			if _, hasOv := s.overrides.Default[modelID]; !hasOv {
+				missingPricingCount++
+			}
+		}
+	}
 
 	for modelID, ov := range s.overrides.Default {
 		isCustom := ov.IsCustom || !ov.Locked
 		if isCustom {
 			defaultOverrideCount++
 		}
-		if s.models[modelID] != nil {
+		if entry := s.models[modelID]; entry != nil && !entry.PricingMissing {
 			if ov.Locked {
 				lockedChannelCount++
 			} else if isCustom {
@@ -1161,7 +1642,7 @@ func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 			if ov.Locked {
 				lockedChannelCount++
 			} else if isCustom {
-				if entry := s.models[modelID]; entry != nil && entry.channelByID[chID] != nil {
+				if entry := s.models[modelID]; entry != nil && !entry.PricingMissing && entry.channelByID[chID] != nil {
 					unlockedCustomCount++
 				}
 			}
@@ -1175,6 +1656,7 @@ func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 		ChannelOverrideCount: channelOverrideCount,
 		LockedChannelCount:   lockedChannelCount,
 		UnlockedCustomCount:  unlockedCustomCount,
+		MissingPricingCount:  missingPricingCount,
 		GroupOverrideCounts:  groupCounts,
 		CacheLoaded:          len(s.models) > 0,
 	}
@@ -1400,10 +1882,11 @@ func extractSupportedModelsDevRecords(body []byte, syncedAt time.Time) ([]ModelP
 				ReleaseDate:                   strings.TrimSpace(rawModel.ReleaseDate),
 				Status:                        strings.TrimSpace(rawModel.Status),
 				Mode:                          catalogPricing.Mode,
-				InputPerMillion:               pricingPM.InputPerMillion,
-				OutputPerMillion:              pricingPM.OutputPerMillion,
-				CacheReadPerMillion:           pricingPM.CacheReadPerMillion,
-				CacheWritePerMillion:          pricingPM.CacheWritePerMillion,
+				PricingMissing:                false,
+				InputPerMillion:               cloneFloat64Ptr(rawModel.Cost.Input),
+				OutputPerMillion:              cloneFloat64Ptr(rawModel.Cost.Output),
+				CacheReadPerMillion:           cloneFloat64Ptr(rawModel.Cost.CacheRead),
+				CacheWritePerMillion:          cloneFloat64Ptr(rawModel.Cost.CacheWrite),
 				CacheWriteExplicit:            rawModel.Cost.CacheWrite != nil,
 				CacheWrite1hPerMillion:        cloneFloat64Ptr(pricingPM.CacheWrite1hPerMillion),
 				CacheStoragePerMillionPerHour: pricingPM.CacheStoragePerMillionPerHour,
@@ -1438,17 +1921,38 @@ func extractSupportedModelsDevRecords(body []byte, syncedAt time.Time) ([]ModelP
 	return records, nil
 }
 
-func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
+func float64PtrValue(v *float64) float64 {
+	if v == nil || *v < 0 {
+		return 0
+	}
+	return *v
+}
+
+func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord, inv *ActiveModelInventory) (
 	map[string]*SupportedModelEntry,
 	map[string][]string,
 	[]SupportedPlatformSummary,
 	int,
 	int,
 	string,
-	error,
 ) {
+	models := make(map[string]*SupportedModelEntry)
+	providerModels := make(map[string][]string)
+
+	emptyPlatformSummaries := func() []SupportedPlatformSummary {
+		out := make([]SupportedPlatformSummary, 0, len(domain.Platforms()))
+		for _, pSpec := range domain.Platforms() {
+			out = append(out, SupportedPlatformSummary{
+				ID:         pSpec.ID,
+				Name:       pSpec.DisplayName,
+				ModelCount: 0,
+			})
+		}
+		return out
+	}
+
 	if len(records) == 0 {
-		return nil, nil, nil, 0, 0, "", fmt.Errorf("no valid supported pricing entries found in catalog")
+		return models, providerModels, emptyPlatformSummaries(), 0, 0, ""
 	}
 
 	sortedRecords := make([]ModelPricingCatalogRecord, len(records))
@@ -1460,7 +1964,6 @@ func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
 		return sortedRecords[i].RawModelID < sortedRecords[j].RawModelID
 	})
 
-	models := make(map[string]*SupportedModelEntry)
 	platformSetsByModel := make(map[string]map[string]struct{})
 	providerModelSets := make(map[string]map[string]struct{})
 	activeChannels := make(map[string]struct{})
@@ -1483,6 +1986,40 @@ func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
 			continue
 		}
 
+		displayName := strings.TrimSpace(rec.DisplayName)
+		if displayName == "" {
+			displayName = origID
+		}
+
+		// Sentinel row: active model has no pricing in models.dev (NULL prices, NOT explicit $0).
+		if rec.PricingMissing || providerID == PricingMissingChannelID {
+			primaryPlatform := strings.TrimSpace(rec.Platform)
+			if primaryPlatform == "" {
+				primaryPlatform = inferSystemPlatformForModel(origID, "")
+			}
+			entry := models[origID]
+			if entry == nil {
+				entry = &SupportedModelEntry{
+					ModelID:        origID,
+					DisplayName:    displayName,
+					Platform:       primaryPlatform,
+					PricingMissing: true,
+					channelByID:    make(map[string]*AccountChannelPriceEntry),
+					rawByChannel:   make(map[string]map[string]*CatalogModelPricing),
+				}
+				models[origID] = entry
+				platformSetsByModel[origID] = make(map[string]struct{})
+				platformSetsByModel[origID][primaryPlatform] = struct{}{}
+			}
+			if inv != nil {
+				for p := range inv.Models[origID] {
+					platformSetsByModel[origID][p] = struct{}{}
+				}
+			}
+			_, _ = fmt.Fprintf(hasher, "%s|%s|missing|%s\n", providerID, origID, primaryPlatform)
+			continue
+		}
+
 		spec, known := supportedModelsDevProviderMap[providerID]
 		channelLabel := providerID
 		channelPlatform := strings.TrimSpace(rec.Platform)
@@ -1495,17 +2032,17 @@ func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
 			primaryPlatform = inferSystemPlatformForModel(origID, channelPlatform)
 		}
 
-		displayName := strings.TrimSpace(rec.DisplayName)
-		if displayName == "" {
-			displayName = origID
-		}
+		inPM := float64PtrValue(rec.InputPerMillion)
+		outPM := float64PtrValue(rec.OutputPerMillion)
+		cacheReadPM := float64PtrValue(rec.CacheReadPerMillion)
+		cacheWritePM := float64PtrValue(rec.CacheWritePerMillion)
 
 		pricingPM := TokenPricingPerMillion{
 			DisplayName:                   displayName,
-			InputPerMillion:               rec.InputPerMillion,
-			OutputPerMillion:              rec.OutputPerMillion,
-			CacheReadPerMillion:           rec.CacheReadPerMillion,
-			CacheWritePerMillion:          rec.CacheWritePerMillion,
+			InputPerMillion:               inPM,
+			OutputPerMillion:              outPM,
+			CacheReadPerMillion:           cacheReadPM,
+			CacheWritePerMillion:          cacheWritePM,
 			CacheWrite1hPerMillion:        cloneFloat64Ptr(rec.CacheWrite1hPerMillion),
 			CacheStoragePerMillionPerHour: rec.CacheStoragePerMillionPerHour,
 			LongContextThreshold:          rec.LongContextThreshold,
@@ -1513,20 +2050,35 @@ func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
 			LongContextOutputMult:         rec.LongContextOutputMult,
 		}
 		catalogPricing := tokenPricingPerMillionToCatalog(pricingPM, providerID, rec.Mode, rec.CacheWriteExplicit)
+		// Preserve explicit $0 pricing provenance from models.dev without marking
+		// non-zero synced rates as admin custom overrides (which would suppress official
+		// peak/off-peak policies such as DeepSeek).
+		if rec.InputPerMillion != nil && *rec.InputPerMillion == 0 {
+			catalogPricing.priceOverrides.input = true
+		}
+		if rec.OutputPerMillion != nil && *rec.OutputPerMillion == 0 {
+			catalogPricing.priceOverrides.output = true
+		}
+		if rec.CacheReadPerMillion != nil && *rec.CacheReadPerMillion == 0 {
+			catalogPricing.priceOverrides.cacheRead = true
+		}
 
 		entry := models[origID]
-		if entry == nil {
+		if entry == nil || entry.PricingMissing {
 			entry = &SupportedModelEntry{
-				ModelID:      origID,
-				DisplayName:  displayName,
-				Family:       strings.TrimSpace(rec.Family),
-				ReleaseDate:  strings.TrimSpace(rec.ReleaseDate),
-				Platform:     primaryPlatform,
-				channelByID:  make(map[string]*AccountChannelPriceEntry),
-				rawByChannel: make(map[string]map[string]*CatalogModelPricing),
+				ModelID:        origID,
+				DisplayName:    displayName,
+				Family:         strings.TrimSpace(rec.Family),
+				ReleaseDate:    strings.TrimSpace(rec.ReleaseDate),
+				Platform:       primaryPlatform,
+				PricingMissing: false,
+				channelByID:    make(map[string]*AccountChannelPriceEntry),
+				rawByChannel:   make(map[string]map[string]*CatalogModelPricing),
 			}
 			models[origID] = entry
-			platformSetsByModel[origID] = make(map[string]struct{})
+			if platformSetsByModel[origID] == nil {
+				platformSetsByModel[origID] = make(map[string]struct{})
+			}
 			platformSetsByModel[origID][primaryPlatform] = struct{}{}
 			if primaryPlatform == PlatformAnthropic || primaryPlatform == PlatformGemini {
 				platformSetsByModel[origID][PlatformAntigravity] = struct{}{}
@@ -1541,6 +2093,11 @@ func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
 		}
 		if channelPlatform != "" {
 			platformSetsByModel[origID][channelPlatform] = struct{}{}
+		}
+		if inv != nil {
+			for p := range inv.Models[origID] {
+				platformSetsByModel[origID][p] = struct{}{}
+			}
 		}
 
 		// Preserve exact raw model ID entry per channel (crucial for Bedrock global vs us/eu regional pricing!)
@@ -1579,49 +2136,51 @@ func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
 
 		_, _ = fmt.Fprintf(hasher, "%s|%s|%s|%.8f|%.8f|%.8f|%.8f|%t|%d|%.6f|%.6f|%d\n",
 			providerID, rec.RawModelID, origID,
-			rec.InputPerMillion, rec.OutputPerMillion, rec.CacheReadPerMillion, rec.CacheWritePerMillion,
+			inPM, outPM, cacheReadPM, cacheWritePM,
 			rec.CacheWriteExplicit, rec.LongContextThreshold, rec.LongContextInputMult, rec.LongContextOutputMult, rec.Score,
 		)
 	}
 
 	if len(models) == 0 {
-		return nil, nil, nil, 0, 0, "", fmt.Errorf("no valid supported pricing entries found in catalog")
+		return models, providerModels, emptyPlatformSummaries(), 0, 0, ""
 	}
 
 	platformModelCounts := make(map[string]int)
 	for origID, entry := range models {
-		channels := make([]AccountChannelPriceEntry, 0, len(entry.channelByID))
-		for _, ch := range entry.channelByID {
-			channels = append(channels, *ch)
-		}
-		sort.SliceStable(channels, func(i, j int) bool {
-			if channels[i].score != channels[j].score {
-				return channels[i].score > channels[j].score
+		if !entry.PricingMissing && len(entry.channelByID) > 0 {
+			channels := make([]AccountChannelPriceEntry, 0, len(entry.channelByID))
+			for _, ch := range entry.channelByID {
+				channels = append(channels, *ch)
 			}
-			return channels[i].ChannelID < channels[j].ChannelID
-		})
-		channels[0].IsDefault = true
-		entry.Channels = channels
-		entry.DefaultChannelID = channels[0].ChannelID
-		entry.DefaultChannelName = channels[0].ChannelName
-		entry.DefaultPricing = channels[0].Pricing
-		entry.defaultCatalog = channels[0].catalog
-		if channels[0].Pricing.DisplayName != "" {
-			entry.DisplayName = channels[0].Pricing.DisplayName
-		}
-		if cm, ok := metaByModelChannel[origID][channels[0].ChannelID]; ok {
-			if cm.family != "" {
-				entry.Family = cm.family
+			sort.SliceStable(channels, func(i, j int) bool {
+				if channels[i].score != channels[j].score {
+					return channels[i].score > channels[j].score
+				}
+				return channels[i].ChannelID < channels[j].ChannelID
+			})
+			channels[0].IsDefault = true
+			entry.Channels = channels
+			entry.DefaultChannelID = channels[0].ChannelID
+			entry.DefaultChannelName = channels[0].ChannelName
+			entry.DefaultPricing = channels[0].Pricing
+			entry.defaultCatalog = channels[0].catalog
+			if channels[0].Pricing.DisplayName != "" {
+				entry.DisplayName = channels[0].Pricing.DisplayName
 			}
-			if cm.releaseDate != "" {
-				entry.ReleaseDate = cm.releaseDate
+			if cm, ok := metaByModelChannel[origID][channels[0].ChannelID]; ok {
+				if cm.family != "" {
+					entry.Family = cm.family
+				}
+				if cm.releaseDate != "" {
+					entry.ReleaseDate = cm.releaseDate
+				}
 			}
-		}
 
-		// Rebuild channelByID pointers against sorted slice
-		entry.channelByID = make(map[string]*AccountChannelPriceEntry, len(channels))
-		for i := range entry.Channels {
-			entry.channelByID[entry.Channels[i].ChannelID] = &entry.Channels[i]
+			// Rebuild channelByID pointers against sorted slice
+			entry.channelByID = make(map[string]*AccountChannelPriceEntry, len(channels))
+			for i := range entry.Channels {
+				entry.channelByID[entry.Channels[i].ChannelID] = &entry.Channels[i]
+			}
 		}
 
 		// Collect platforms in canonical domain.Platforms() display order
@@ -1636,7 +2195,6 @@ func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
 		entry.Platforms = orderedPlatforms
 	}
 
-	providerModels := make(map[string][]string, len(providerModelSets))
 	for pid, set := range providerModelSets {
 		list := make([]string, 0, len(set))
 		for m := range set {
@@ -1656,7 +2214,7 @@ func buildCatalogStateFromRecords(records []ModelPricingCatalogRecord) (
 	}
 
 	hashStr := hex.EncodeToString(hasher.Sum(nil))
-	return models, providerModels, platformSummaries, len(activeChannels), rawEntryCount, hashStr, nil
+	return models, providerModels, platformSummaries, len(activeChannels), rawEntryCount, hashStr
 }
 
 func convertModelsDevCost(providerID string, raw modelsDevRawModel) (TokenPricingPerMillion, *CatalogModelPricing) {
@@ -2002,6 +2560,10 @@ func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, chann
 				if entry == nil {
 					s.mu.RUnlock()
 					return fmt.Errorf("model %q not found", normID)
+				}
+				if entry.PricingMissing {
+					s.mu.RUnlock()
+					return fmt.Errorf("model %q has missing pricing; set a price before locking", normID)
 				}
 				next := ModelPricingOverride{
 					Platform:  entry.Platform,
@@ -2379,6 +2941,10 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 
 		// Status filter
 		switch filterMode {
+		case "missing":
+			if !item.IsPricingMissing {
+				continue
+			}
 		case "overridden":
 			if query.GroupID > 0 {
 				if !item.IsGroupOverridden && item.ChannelOverrideCount == 0 {
@@ -2421,6 +2987,9 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 		}
 		if query.GroupID > 0 && items[i].IsGroupOverridden != items[j].IsGroupOverridden {
 			return items[i].IsGroupOverridden
+		}
+		if items[i].IsPricingMissing != items[j].IsPricingMissing {
+			return items[i].IsPricingMissing
 		}
 		if items[i].IsCustomOnly != items[j].IsCustomOnly {
 			return items[i].IsCustomOnly
@@ -2487,6 +3056,7 @@ func (s *PricingService) buildListItemLocked(
 		Platform:           platform,
 		Platforms:          []string{platform},
 		IsCustomOnly:       entry == nil,
+		IsPricingMissing:   entry != nil && entry.PricingMissing && !hasDefaultOv,
 		IsDefaultModified:  defaultIsCustom,
 		IsDefaultLocked:    hasDefaultOv && defaultOv.Locked,
 		GroupOverrideCount: groupOverrideCount,
@@ -2495,6 +3065,9 @@ func (s *PricingService) buildListItemLocked(
 
 	var defaultPricing TokenPricingPerMillion
 	defaultSource := "default_auto"
+	if entry != nil && entry.PricingMissing && !hasDefaultOv {
+		defaultSource = "missing_pricing"
+	}
 	var defaultUpdatedAt *time.Time
 
 	if entry != nil {
@@ -2503,43 +3076,45 @@ func (s *PricingService) buildListItemLocked(
 		item.Platforms = append([]string(nil), entry.Platforms...)
 		item.Family = entry.Family
 		item.ReleaseDate = entry.ReleaseDate
-		item.DefaultChannelID = entry.DefaultChannelID
-		item.DefaultChannelName = entry.DefaultChannelName
-		item.ChannelPrices = make([]AccountChannelPriceEntry, len(entry.Channels))
-		for i, ch := range entry.Channels {
-			origPricing := ch.Pricing
-			chCopy := ch
-			if chCopy.IsDefault {
-				if hasDefaultOv {
-					chCopy.Pricing = defaultOv.Custom
-					chCopy.IsLocked = defaultOv.Locked
-					chCopy.IsOverridden = defaultIsCustom
-					origCopy := origPricing
-					chCopy.SyncedPricing = &origCopy
-					t := defaultOv.UpdatedAt
-					chCopy.UpdatedAt = &t
+		if !entry.PricingMissing {
+			item.DefaultChannelID = entry.DefaultChannelID
+			item.DefaultChannelName = entry.DefaultChannelName
+			item.ChannelPrices = make([]AccountChannelPriceEntry, len(entry.Channels))
+			for i, ch := range entry.Channels {
+				origPricing := ch.Pricing
+				chCopy := ch
+				if chCopy.IsDefault {
+					if hasDefaultOv {
+						chCopy.Pricing = defaultOv.Custom
+						chCopy.IsLocked = defaultOv.Locked
+						chCopy.IsOverridden = defaultIsCustom
+						origCopy := origPricing
+						chCopy.SyncedPricing = &origCopy
+						t := defaultOv.UpdatedAt
+						chCopy.UpdatedAt = &t
+					}
+				} else if cm := s.overrides.Channels[chCopy.ChannelID]; cm != nil {
+					if chOv, ok := cm[modelID]; ok {
+						chIsCustom := chOv.IsCustom || !chOv.Locked
+						chCopy.Pricing = chOv.Custom
+						chCopy.IsLocked = chOv.Locked
+						chCopy.IsOverridden = chIsCustom
+						origCopy := origPricing
+						chCopy.SyncedPricing = &origCopy
+						t := chOv.UpdatedAt
+						chCopy.UpdatedAt = &t
+					}
 				}
-			} else if cm := s.overrides.Channels[chCopy.ChannelID]; cm != nil {
-				if chOv, ok := cm[modelID]; ok {
-					chIsCustom := chOv.IsCustom || !chOv.Locked
-					chCopy.Pricing = chOv.Custom
-					chCopy.IsLocked = chOv.Locked
-					chCopy.IsOverridden = chIsCustom
-					origCopy := origPricing
-					chCopy.SyncedPricing = &origCopy
-					t := chOv.UpdatedAt
-					chCopy.UpdatedAt = &t
+				if chCopy.IsOverridden {
+					item.ChannelOverrideCount++
 				}
+				if chCopy.IsLocked {
+					item.LockedChannelCount++
+				}
+				item.ChannelPrices[i] = chCopy
 			}
-			if chCopy.IsOverridden {
-				item.ChannelOverrideCount++
-			}
-			if chCopy.IsLocked {
-				item.LockedChannelCount++
-			}
-			item.ChannelPrices[i] = chCopy
+			defaultPricing = entry.DefaultPricing
 		}
-		defaultPricing = entry.DefaultPricing
 	}
 
 	if hasDefaultOv {
@@ -2558,9 +3133,12 @@ func (s *PricingService) buildListItemLocked(
 		if grpOv, ok := activeGroupOverrides[modelID]; ok {
 			t := grpOv.UpdatedAt
 			item.EffectivePricing = grpOv.Custom
-			item.DefaultPricing = &defaultPricing
+			if !item.IsPricingMissing {
+				item.DefaultPricing = &defaultPricing
+			}
 			item.Source = "group_custom"
 			item.IsGroupOverridden = true
+			item.IsPricingMissing = false
 			item.UpdatedAt = &t
 			if grpOv.Platform != "" && entry == nil {
 				item.Platform = grpOv.Platform
@@ -2572,8 +3150,12 @@ func (s *PricingService) buildListItemLocked(
 			return item
 		}
 		item.EffectivePricing = defaultPricing
-		item.DefaultPricing = &defaultPricing
-		item.Source = "inherited_default"
+		if !item.IsPricingMissing {
+			item.DefaultPricing = &defaultPricing
+			item.Source = "inherited_default"
+		} else {
+			item.Source = "missing_pricing"
+		}
 		item.IsGroupOverridden = false
 		item.UpdatedAt = defaultUpdatedAt
 		return item
@@ -2961,22 +3543,27 @@ func (s *PricingService) matchByModelFamilyLocked(model string) *CatalogModelPri
 		if pricing, ok := s.effectiveDefaultData["claude-fable-5-2"]; ok {
 			return pricing
 		}
+		return claude52FallbackPricing
 	case claude.IsMythos52(model):
 		if pricing, ok := s.effectiveDefaultData["claude-mythos-5-2"]; ok {
 			return pricing
 		}
+		return claude52FallbackPricing
 	case claude.IsOpus55(model):
 		if pricing, ok := s.effectiveDefaultData["claude-opus-5-5"]; ok {
 			return pricing
 		}
+		return claudeOpus55FallbackPricing
 	case claude.IsSonnet55(model):
 		if pricing, ok := s.effectiveDefaultData["claude-sonnet-5-5"]; ok {
 			return pricing
 		}
+		return claudeSonnet55FallbackPricing
 	case claude.IsHaiku55(model):
 		if pricing, ok := s.effectiveDefaultData["claude-haiku-5-5"]; ok {
 			return pricing
 		}
+		return claudeHaiku55FallbackPricing
 	}
 
 	type modelFamily struct {
@@ -3050,21 +3637,31 @@ func (s *PricingService) matchOpenAIModelLocked(model string) *CatalogModelPrici
 		if pricing, ok := s.effectiveDefaultData["gpt-6.1-terra"]; ok {
 			return pricing
 		}
+		return openAIGPT61TerraFallbackPricing
 	}
 	if base := openai.GPT62ModelID(model); base != "" {
 		if pricing, ok := s.effectiveDefaultData[base]; ok {
 			return pricing
 		}
+		if base == "gpt-6.2-sol" {
+			return openAIGPT61SolFallbackPricing
+		}
+		return openAIGPT62AstraFallbackPricing
 	}
 	if openai.IsGPT61SolModelSpelling(model) {
 		if pricing, ok := s.effectiveDefaultData["gpt-6.1-sol"]; ok {
 			return pricing
 		}
+		return openAIGPT61SolFallbackPricing
 	}
 	if openai.IsGPT6SolOrLunaModelSpelling(model) {
 		if pricing, ok := s.effectiveDefaultData[normalizeKnownOpenAICodexModel(model)]; ok {
 			return pricing
 		}
+		if strings.HasPrefix(model, "gpt-6-sol") {
+			return openAIGPT6SolFallbackPricing
+		}
+		return openAIGPT6LunaFallbackPricing
 	}
 
 	variants := s.generateOpenAIModelVariants(model, openAIModelDatePattern)
@@ -3079,6 +3676,15 @@ func (s *PricingService) matchOpenAIModelLocked(model string) *CatalogModelPrici
 	if strings.HasPrefix(model, "gpt-5.3-codex") {
 		if pricing, ok := s.effectiveDefaultData["gpt-5.2-codex"]; ok {
 			return pricing
+		}
+	}
+
+	if model == "gpt-image-2.6-flare" || model == "gpt-image-2.6-sunburst" {
+		return openAIGPTImage25FallbackPricing
+	}
+	for _, imageModel := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
+		if model == imageModel || model == imageModel+"-2026-09-08" {
+			return openAIGPTImage25FallbackPricing
 		}
 	}
 

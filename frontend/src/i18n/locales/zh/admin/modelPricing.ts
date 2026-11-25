@@ -1,7 +1,7 @@
 export default {
   modelPricing: {
     title: '模型定价',
-    description: '仅同步系统支持平台的模型价格，支持展开按账户类型渠道编辑与加锁，也支持按系统分组单独设置价格',
+    description: '按当前账号在用模型自动维护定价表：新增模型自动补齐，移除不再使用的模型自动清理；缺失定价与 $0 免费严格区分',
     unitHint: '单位：USD / 百万 Token（$/MTok）',
     priorityHint: '生效优先级：分组单独设置价格 > 对应渠道价格（按账户类型自动匹配） > 默认渠道价格',
     searchPlaceholder: '搜索模型 ID、名称或渠道...',
@@ -14,12 +14,14 @@ export default {
     filterOverridden: '已单独设置',
     filterCustom: '自定义价格',
     filterLocked: '已锁定渠道',
+    filterMissing: '缺失定价',
     syncSettings: '同步设置',
     syncNow: '立即同步',
     syncing: '同步中...',
     addCustomModel: '添加自定义模型',
-    syncSummary: '已缓存 {models} 个系统支持模型 · {channels} 个渠道价源',
+    syncSummary: '当前在用 {models} 个模型 · {channels} 个渠道价源',
     lockedSummary: '已锁定 {count} 个渠道价',
+    missingSummary: '缺失 {count} 个模型定价',
     autoSyncOn: '定时同步：每 {hours} 小时（自动跳过已锁定渠道）',
     autoSyncOff: '定时同步已关闭',
     lastSyncAt: '上次同步：{time}',
@@ -39,7 +41,8 @@ export default {
       default_auto: '默认渠道',
       default_custom: '默认自定义',
       inherited_default: '继承默认',
-      group_custom: '分组定价'
+      group_custom: '分组定价',
+      missing_pricing: '缺失定价'
     },
     badges: {
       defaultChannel: '默认',
@@ -72,8 +75,8 @@ export default {
       collapseChannels: '收起渠道价格'
     },
     empty: {
-      title: '暂无匹配的模型价格',
-      description: '点击右上角“立即同步”从 models.dev 拉取系统支持的模型价格，或手动添加自定义模型'
+      title: '暂无在用模型定价',
+      description: '初始状态下模型价格表为空；添加账号并配置模型后将自动从 models.dev 补齐价格，或点击右上角“立即同步”刷新'
     },
     editModal: {
       createTitle: '添加自定义模型定价',

@@ -13,6 +13,9 @@ func TestModelPricingTablesMigration(t *testing.T) {
 
 	sql := strings.Join(strings.Fields(string(content)), " ")
 	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS model_pricing_catalog_entries")
+	require.Contains(t, sql, "pricing_missing BOOLEAN NOT NULL DEFAULT FALSE")
+	require.Contains(t, sql, "input_per_million NUMERIC(18, 8),")
+	require.Contains(t, sql, "output_per_million NUMERIC(18, 8),")
 	require.Contains(t, sql, "PRIMARY KEY (channel_id, raw_model_id)")
 	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_model_pricing_catalog_entries_model_id")
 	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_model_pricing_catalog_entries_platform")
