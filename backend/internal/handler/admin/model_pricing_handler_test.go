@@ -90,7 +90,7 @@ func setupModelPricingTestRouter(t *testing.T) (*gin.Engine, *service.PricingSer
 	g.GET("/models", h.ListModels)
 	g.PUT("/override", h.UpsertOverride)
 	g.DELETE("/override", h.ResetOverride)
-	g.PUT("/lock", h.SetChannelLock)
+	g.PUT("/freeze", h.SetChannelFreeze)
 	return r, svc
 }
 
@@ -164,15 +164,15 @@ func TestModelPricingHandler_EndToEndFlow(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listResp))
 	require.Equal(t, "inherited_default", listResp.Data.Items[0].Source)
 
-	// 7. Edit amazon-bedrock channel price & lock status
-	chBody := `{"channel_id":"amazon-bedrock","model_id":"claude-opus-5","input_per_million":4.9,"output_per_million":24.5,"locked":true}`
+	// 7. Edit amazon-bedrock channel price & freeze status
+	chBody := `{"channel_id":"amazon-bedrock","model_id":"claude-opus-5","input_per_million":4.9,"output_per_million":24.5,"frozen":true}`
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/admin/model-pricing/override", bytes.NewBufferString(chBody))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Verify channel price & lock are returned
+	// Verify channel price & freeze state are returned
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/admin/model-pricing/models?search=claude-opus-5", nil)
 	r.ServeHTTP(w, req)
@@ -183,16 +183,16 @@ func TestModelPricingHandler_EndToEndFlow(t *testing.T) {
 		if ch.ChannelID == "amazon-bedrock" {
 			bedrockFound = true
 			require.True(t, ch.IsOverridden)
-			require.True(t, ch.IsLocked)
+			require.True(t, ch.IsFrozen)
 			require.InDelta(t, 4.9, ch.Pricing.InputPerMillion, 1e-9)
 		}
 	}
 	require.True(t, bedrockFound)
 
-	// 8. Unlock via PUT /lock and test manual sync overwrite_all
-	lockBody := `{"model_id":"claude-opus-5","channel_id":"amazon-bedrock","locked":false}`
+	// 8. Unfreeze via PUT /freeze and test manual sync overwrite_all
+	freezeBody := `{"model_id":"claude-opus-5","channel_id":"amazon-bedrock","frozen":false}`
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPut, "/admin/model-pricing/lock", bytes.NewBufferString(lockBody))
+	req = httptest.NewRequest(http.MethodPut, "/admin/model-pricing/freeze", bytes.NewBufferString(freezeBody))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -203,5 +203,5 @@ func TestModelPricingHandler_EndToEndFlow(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	require.Contains(t, w.Body.String(), `"locked_channel_count":0`)
+	require.Contains(t, w.Body.String(), `"frozen_channel_count":0`)
 }

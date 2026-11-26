@@ -1,5 +1,5 @@
 -- 254_model_pricing_tables.sql
--- Store active-inventory-driven models.dev pricing entries and scoped custom overrides / locks
+-- Store active-inventory-driven models.dev pricing entries and scoped custom overrides / freezes
 -- directly in PostgreSQL tables. Nullable price columns distinguish NULL (pricing missing/unset)
 -- from explicit 0 (free).
 
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS model_pricing_overrides (
     long_context_threshold INTEGER NOT NULL DEFAULT 0,
     long_context_input_multiplier NUMERIC(12, 6) NOT NULL DEFAULT 0,
     long_context_output_multiplier NUMERIC(12, 6) NOT NULL DEFAULT 0,
-    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
+    is_frozen BOOLEAN NOT NULL DEFAULT FALSE,
     is_custom BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (scope, scope_id, model_id)

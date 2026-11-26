@@ -98,7 +98,7 @@ func (r *modelPricingRepository) ListOverrides(ctx context.Context) ([]service.M
 			cache_read_per_million, cache_write_per_million,
 			cache_write_1h_per_million, cache_storage_per_million_per_hour,
 			long_context_threshold, long_context_input_multiplier, long_context_output_multiplier,
-			is_locked, is_custom, updated_at
+			is_frozen, is_custom, updated_at
 		FROM model_pricing_overrides
 		ORDER BY scope ASC, scope_id ASC, model_id ASC
 	`
@@ -119,7 +119,7 @@ func (r *modelPricingRepository) ListOverrides(ctx context.Context) ([]service.M
 			&rec.CacheReadPerMillion, &rec.CacheWritePerMillion,
 			&cacheWrite1h, &rec.CacheStoragePerMillionPerHour,
 			&rec.LongContextThreshold, &rec.LongContextInputMult, &rec.LongContextOutputMult,
-			&rec.Locked, &rec.IsCustom, &rec.UpdatedAt,
+			&rec.Frozen, &rec.IsCustom, &rec.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan model_pricing_overrides: %w", err)
 		}
@@ -237,7 +237,7 @@ func (r *modelPricingRepository) UpsertOverride(
 			cache_read_per_million, cache_write_per_million,
 			cache_write_1h_per_million, cache_storage_per_million_per_hour,
 			long_context_threshold, long_context_input_multiplier, long_context_output_multiplier,
-			is_locked, is_custom, updated_at
+			is_frozen, is_custom, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7,
@@ -258,7 +258,7 @@ func (r *modelPricingRepository) UpsertOverride(
 			long_context_threshold = EXCLUDED.long_context_threshold,
 			long_context_input_multiplier = EXCLUDED.long_context_input_multiplier,
 			long_context_output_multiplier = EXCLUDED.long_context_output_multiplier,
-			is_locked = EXCLUDED.is_locked,
+			is_frozen = EXCLUDED.is_frozen,
 			is_custom = EXCLUDED.is_custom,
 			updated_at = EXCLUDED.updated_at
 	`
@@ -270,7 +270,7 @@ func (r *modelPricingRepository) UpsertOverride(
 		rec.CacheReadPerMillion, rec.CacheWritePerMillion,
 		nullableFloat64Arg(rec.CacheWrite1hPerMillion), rec.CacheStoragePerMillionPerHour,
 		rec.LongContextThreshold, rec.LongContextInputMult, rec.LongContextOutputMult,
-		rec.Locked, rec.IsCustom, updatedAt.UTC(),
+		rec.Frozen, rec.IsCustom, updatedAt.UTC(),
 	); err != nil {
 		return rollback(fmt.Errorf("upsert model_pricing_overrides: %w", err))
 	}

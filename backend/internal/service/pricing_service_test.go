@@ -453,7 +453,7 @@ func TestAccountTypeMatchingAndThreeTierPriority(t *testing.T) {
 	require.InDelta(t, 4.0e-6, svc2.GetModelPricing("claude-opus-5").InputCostPerToken, 1e-12)
 }
 
-func TestChannelEditingLockAndSyncOverwriteModes(t *testing.T) {
+func TestChannelEditingFreezeAndSyncOverwriteModes(t *testing.T) {
 	ctx := context.Background()
 	repo := newInMemorySettingRepo()
 	initialJSON := `{
@@ -547,22 +547,22 @@ func TestChannelEditingLockAndSyncOverwriteModes(t *testing.T) {
 	vertexAcc := &Account{Platform: PlatformAnthropic, Type: AccountTypeServiceAccount}
 	anthAcc := &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}
 
-	// 1. Edit amazon-bedrock channel price (locked by default = true)
+	// 1. Edit amazon-bedrock channel price (frozen by default = true)
 	require.NoError(t, svc.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		ChannelID: "amazon-bedrock",
 		ModelID:   "claude-opus-5",
 		Custom:    TokenPricingPerMillion{InputPerMillion: 4.8, OutputPerMillion: 24.0},
 	}))
 
-	// 2. Lock google-vertex-anthropic without editing numbers (snapshot lock at $5.2/$26)
-	require.NoError(t, svc.SetChannelPriceLock(ctx, "claude-opus-5", "google-vertex-anthropic", true))
+	// 2. Freeze google-vertex-anthropic without editing numbers (snapshot freeze at $5.2/$26)
+	require.NoError(t, svc.SetChannelPriceFreeze(ctx, "claude-opus-5", "google-vertex-anthropic", true))
 
-	// 3. Edit anthropic default price with locked=false (unlocked custom -> will update on next sync)
-	unlocked := false
+	// 3. Edit anthropic default price with frozen=false (unfrozen custom -> will update on next sync)
+	unfrozen := false
 	require.NoError(t, svc.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		ChannelID: "anthropic",
 		ModelID:   "claude-opus-5",
-		Locked:    &unlocked,
+		Frozen:    &unfrozen,
 		Custom:    TokenPricingPerMillion{InputPerMillion: 4.1, OutputPerMillion: 20.5},
 	}))
 
@@ -583,44 +583,44 @@ func TestChannelEditingLockAndSyncOverwriteModes(t *testing.T) {
 	require.Equal(t, PricingSourceAccountChannel, resBedrock.Source)
 	require.InDelta(t, 4.8e-6, resBedrock.BasePricing.InputPricePerToken, 1e-12)
 
-	// 5. Simulate auto-sync (skip_locked) with updated models.dev prices
+	// 5. Simulate auto-sync (skip_frozen) with updated models.dev prices
 	client.body = []byte(updatedJSON)
-	status, err := svc.SyncNowWithMode(ctx, PricingSyncOverwriteSkipLocked)
+	status, err := svc.SyncNowWithMode(ctx, PricingSyncOverwriteSkipFrozen)
 	require.NoError(t, err)
-	require.Equal(t, 2, status.Meta.LastSkippedLocked) // bedrock + vertex locked
-	require.Equal(t, 1, status.Meta.LastOverwrittenCount) // unlocked anthropic custom updated
+	require.Equal(t, 2, status.Meta.LastSkippedFrozen)   // bedrock + vertex frozen
+	require.Equal(t, 1, status.Meta.LastOverwrittenCount) // unfrozen anthropic custom updated
 
 	// Bedrock stays $4.8, Vertex stays $5.2, Anthropic updates to $6.0!
 	require.InDelta(t, 4.8e-6, resolver.Resolve(ctx, PricingInput{Model: "claude-opus-5", Account: bedrockAcc}).BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 5.2e-6, resolver.Resolve(ctx, PricingInput{Model: "claude-opus-5", Account: vertexAcc}).BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 6.0e-6, resolver.Resolve(ctx, PricingInput{Model: "claude-opus-5", Account: anthAcc}).BasePricing.InputPricePerToken, 1e-12)
 
-	// 6. Unlock Vertex (snapshot lock) -> immediately reverts to latest synced $6.5!
-	require.NoError(t, svc.SetChannelPriceLock(ctx, "claude-opus-5", "google-vertex-anthropic", false))
+	// 6. Unfreeze Vertex (snapshot freeze) -> immediately reverts to latest synced $6.5!
+	require.NoError(t, svc.SetChannelPriceFreeze(ctx, "claude-opus-5", "google-vertex-anthropic", false))
 	require.InDelta(t, 6.5e-6, resolver.Resolve(ctx, PricingInput{Model: "claude-opus-5", Account: vertexAcc}).BasePricing.InputPricePerToken, 1e-12)
 
-	// 7. Manual sync with overwrite_all -> overwrites even locked Bedrock back to $7.0, while Group 77 stays $2.0!
+	// 7. Manual sync with overwrite_all -> overwrites even frozen Bedrock back to $7.0, while Group 77 stays $2.0!
 	status, err = svc.SyncNowWithMode(ctx, PricingSyncOverwriteAll)
 	require.NoError(t, err)
 	require.Equal(t, 1, status.Meta.LastOverwrittenCount)
-	require.Equal(t, 0, status.LockedChannelCount)
+	require.Equal(t, 0, status.FrozenChannelCount)
 	require.InDelta(t, 7.0e-6, resolver.Resolve(ctx, PricingInput{Model: "claude-opus-5", Account: bedrockAcc}).BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 2.0e-6, resolver.Resolve(ctx, PricingInput{Model: "claude-opus-5", GroupID: &g77, Account: bedrockAcc}).BasePricing.InputPricePerToken, 1e-12)
 
-	// 8. Lock default channel directly with empty channelID -> freezes current default price ($6.0) across next sync
-	require.NoError(t, svc.SetChannelPriceLock(ctx, "claude-opus-5", "", true))
-	listAfterDefaultLock := svc.ListModelPricingCatalog(ModelPricingListQuery{Search: "claude-opus-5"})
-	require.Len(t, listAfterDefaultLock.Items, 1)
-	require.True(t, listAfterDefaultLock.Items[0].IsDefaultLocked)
-	require.Equal(t, 1, listAfterDefaultLock.Items[0].LockedChannelCount)
-	require.True(t, listAfterDefaultLock.Items[0].ChannelPrices[0].IsDefault)
-	require.True(t, listAfterDefaultLock.Items[0].ChannelPrices[0].IsLocked)
+	// 8. Freeze default channel directly with empty channelID -> freezes current default price ($6.0) across next sync
+	require.NoError(t, svc.SetChannelPriceFreeze(ctx, "claude-opus-5", "", true))
+	listAfterDefaultFreeze := svc.ListModelPricingCatalog(ModelPricingListQuery{Search: "claude-opus-5"})
+	require.Len(t, listAfterDefaultFreeze.Items, 1)
+	require.True(t, listAfterDefaultFreeze.Items[0].IsDefaultFrozen)
+	require.Equal(t, 1, listAfterDefaultFreeze.Items[0].FrozenChannelCount)
+	require.True(t, listAfterDefaultFreeze.Items[0].ChannelPrices[0].IsDefault)
+	require.True(t, listAfterDefaultFreeze.Items[0].ChannelPrices[0].IsFrozen)
 
 	// Edit default channel with display_name, then edit via default channelID without display_name -> preserves display_name
-	lockedTrue := true
+	frozenTrue := true
 	require.NoError(t, svc.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		ModelID: "claude-opus-5",
-		Locked:  &lockedTrue,
+		Frozen:  &frozenTrue,
 		Custom: TokenPricingPerMillion{
 			DisplayName:      "Claude Opus 5 Custom",
 			InputPerMillion:  6.2,
@@ -630,7 +630,7 @@ func TestChannelEditingLockAndSyncOverwriteModes(t *testing.T) {
 	require.NoError(t, svc.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		ChannelID: "anthropic",
 		ModelID:   "claude-opus-5",
-		Locked:    &lockedTrue,
+		Frozen:    &frozenTrue,
 		Custom: TokenPricingPerMillion{
 			InputPerMillion:  6.4,
 			OutputPerMillion: 32.0,
@@ -640,12 +640,12 @@ func TestChannelEditingLockAndSyncOverwriteModes(t *testing.T) {
 	require.Equal(t, "Claude Opus 5 Custom", listAfterDefaultEdit.Items[0].DisplayName)
 	require.InDelta(t, 6.4, listAfterDefaultEdit.Items[0].EffectivePricing.InputPerMillion, 1e-9)
 
-	// Unlock default channel via explicit default channelID -> keeps custom price ($6.4) and marks unlocked
-	require.NoError(t, svc.SetChannelPriceLock(ctx, "claude-opus-5", "anthropic", false))
-	listAfterDefaultUnlock := svc.ListModelPricingCatalog(ModelPricingListQuery{Search: "claude-opus-5"})
-	require.False(t, listAfterDefaultUnlock.Items[0].IsDefaultLocked)
-	require.True(t, listAfterDefaultUnlock.Items[0].IsDefaultModified)
-	require.InDelta(t, 6.4, listAfterDefaultUnlock.Items[0].EffectivePricing.InputPerMillion, 1e-9)
+	// Unfreeze default channel via explicit default channelID -> keeps custom price ($6.4) and marks unfrozen
+	require.NoError(t, svc.SetChannelPriceFreeze(ctx, "claude-opus-5", "anthropic", false))
+	listAfterDefaultUnfreeze := svc.ListModelPricingCatalog(ModelPricingListQuery{Search: "claude-opus-5"})
+	require.False(t, listAfterDefaultUnfreeze.Items[0].IsDefaultFrozen)
+	require.True(t, listAfterDefaultUnfreeze.Items[0].IsDefaultModified)
+	require.InDelta(t, 6.4, listAfterDefaultUnfreeze.Items[0].EffectivePricing.InputPerMillion, 1e-9)
 }
 
 func TestListModelNamesByProvider_ModelsDev(t *testing.T) {

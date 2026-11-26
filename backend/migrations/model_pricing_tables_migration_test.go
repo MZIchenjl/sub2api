@@ -22,6 +22,7 @@ func TestModelPricingTablesMigration(t *testing.T) {
 
 	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS model_pricing_overrides")
 	require.Contains(t, sql, "CHECK (scope IN ('default', 'channel', 'group'))")
+	require.Contains(t, sql, "is_frozen BOOLEAN NOT NULL DEFAULT FALSE")
 	require.Contains(t, sql, "PRIMARY KEY (scope, scope_id, model_id)")
 	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_model_pricing_overrides_model_id")
 }

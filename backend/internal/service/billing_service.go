@@ -1584,7 +1584,7 @@ func (s *BillingService) GetAccountChannelModelPricing(providerID, model, upstre
 	if !ok || catalogPricing == nil || catalogPricing.TokenPricingAbsent {
 		return nil, false
 	}
-	// 仅对默认官方 DeepSeek 渠道（且未被自定义/锁定时）应用官方低谷价策略；第三方/独立渠道及自定义覆盖保留其价格。
+	// 仅对默认官方 DeepSeek 渠道（且未被自定义/冻结时）应用官方低谷价策略；第三方/独立渠道及自定义覆盖保留其价格。
 	forceDeepSeek := strings.EqualFold(strings.TrimSpace(providerID), "deepseek") && catalogPricing.Provider != "custom"
 	return s.catalogPricingToModelPricing(model, catalogPricing, forceDeepSeek, timezone.Now()), true
 }
