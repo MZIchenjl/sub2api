@@ -181,11 +181,11 @@
                 }}
               </span>
               <span
-                v-if="syncStatus && syncStatus.locked_channel_count > 0"
-                class="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-300"
+                v-if="syncStatus && syncStatus.frozen_channel_count > 0"
+                class="inline-flex items-center gap-1 font-medium text-sky-700 dark:text-sky-300"
               >
-                <Icon name="lock" size="xs" />
-                {{ t('admin.modelPricing.lockedSummary', { count: syncStatus.locked_channel_count }) }}
+                <Icon name="snowflake" size="xs" />
+                {{ t('admin.modelPricing.frozenSummary', { count: syncStatus.frozen_channel_count }) }}
               </span>
               <button
                 v-if="syncStatus && syncStatus.missing_pricing_count > 0"
@@ -267,11 +267,11 @@
                     {{ t('admin.modelPricing.badges.otherChannelCount', { count: getOtherChannels(row.item).length }) }}
                   </button>
                   <span
-                    v-if="row.item.locked_channel_count > 0"
-                    class="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                    v-if="row.item.frozen_channel_count > 0"
+                    class="inline-flex items-center gap-0.5 rounded-full bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 dark:bg-sky-900/30 dark:text-sky-300"
                   >
-                    <Icon name="lock" size="xs" />
-                    {{ t('admin.modelPricing.badges.lockedCount', { count: row.item.locked_channel_count }) }}
+                    <Icon name="snowflake" size="xs" />
+                    {{ t('admin.modelPricing.badges.frozenCount', { count: row.item.frozen_channel_count }) }}
                   </span>
                   <span
                     v-if="row.item.is_custom_only"
@@ -349,7 +349,7 @@
             </div>
           </template>
 
-          <!-- Column 2: Platform + Default Lock Status (Level 1) / Channel Lock Status (Level 2) -->
+          <!-- Column 2: Platform + Default Freeze Status (Level 1) / Channel Freeze Status (Level 2) -->
           <template #cell-platform="{ row }">
             <div v-if="row._rowType === 'model'" class="flex flex-col items-start gap-1">
               <span
@@ -365,14 +365,18 @@
                 v-if="selectedGroupId === 0 && !row.item.is_custom_only && !row.item.is_pricing_missing"
                 :class="[
                   'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
-                  row.item.is_default_locked
-                    ? 'bg-amber-100/90 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                  row.item.is_default_frozen
+                    ? 'bg-sky-100/90 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
                     : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400'
                 ]"
               >
-                <Icon :name="row.item.is_default_locked ? 'lock' : 'unlock'" size="xs" />
+                <Icon
+                  name="snowflake"
+                  size="xs"
+                  :class="!row.item.is_default_frozen && 'opacity-50'"
+                />
                 <span>
-                  {{ row.item.is_default_locked ? t('admin.modelPricing.lock.locked') : t('admin.modelPricing.lock.unlocked') }}
+                  {{ row.item.is_default_frozen ? t('admin.modelPricing.freeze.frozen') : t('admin.modelPricing.freeze.unfrozen') }}
                 </span>
               </span>
             </div>
@@ -381,14 +385,18 @@
               v-else
               :class="[
                 'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium',
-                row.channel.is_locked
-                  ? 'bg-amber-100/90 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                row.channel.is_frozen
+                  ? 'bg-sky-100/90 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400'
               ]"
             >
-              <Icon :name="row.channel.is_locked ? 'lock' : 'unlock'" size="xs" />
+              <Icon
+                name="snowflake"
+                size="xs"
+                :class="!row.channel.is_frozen && 'opacity-50'"
+              />
               <span>
-                {{ row.channel.is_locked ? t('admin.modelPricing.lock.locked') : t('admin.modelPricing.lock.unlocked') }}
+                {{ row.channel.is_frozen ? t('admin.modelPricing.freeze.frozen') : t('admin.modelPricing.freeze.unfrozen') }}
               </span>
             </span>
           </template>
@@ -513,23 +521,23 @@
               <button
                 v-if="selectedGroupId === 0 && !row.item.is_custom_only && !row.item.is_pricing_missing"
                 type="button"
-                :disabled="isChannelLockLoading(row.item.model_id, row.item.default_channel_id || '')"
-                @click="toggleDefaultLock(row.item)"
+                :disabled="isChannelFreezeLoading(row.item.model_id, row.item.default_channel_id || '')"
+                @click="toggleDefaultFreeze(row.item)"
                 :class="[
                   'flex min-w-[44px] flex-col items-center gap-0.5 rounded-lg px-2 py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                  row.item.is_default_locked
-                    ? 'bg-amber-50/80 text-amber-600 hover:bg-amber-100/80 dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-900/35'
-                    : 'text-gray-500 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/20 dark:hover:text-amber-400'
+                  row.item.is_default_frozen
+                    ? 'bg-sky-50/80 text-sky-600 hover:bg-sky-100/80 dark:bg-sky-900/20 dark:text-sky-400 dark:hover:bg-sky-900/35'
+                    : 'text-gray-500 hover:bg-sky-50 hover:text-sky-600 dark:hover:bg-sky-900/20 dark:hover:text-sky-400'
                 ]"
                 :title="
-                  row.item.is_default_locked
-                    ? t('admin.modelPricing.lock.unlockDefaultHint')
-                    : t('admin.modelPricing.lock.lockDefaultHint')
+                  row.item.is_default_frozen
+                    ? t('admin.modelPricing.freeze.unfreezeDefaultHint')
+                    : t('admin.modelPricing.freeze.freezeDefaultHint')
                 "
               >
-                <Icon :name="row.item.is_default_locked ? 'lock' : 'unlock'" size="sm" />
+                <Icon name="snowflake" size="sm" />
                 <span class="text-xs">
-                  {{ row.item.is_default_locked ? t('admin.modelPricing.actions.unlock') : t('admin.modelPricing.actions.lock') }}
+                  {{ row.item.is_default_frozen ? t('admin.modelPricing.actions.unfreeze') : t('admin.modelPricing.actions.freeze') }}
                 </span>
               </button>
               <button
@@ -554,23 +562,23 @@
             <div v-else class="flex items-center gap-1">
               <button
                 type="button"
-                :disabled="isChannelLockLoading(row.item.model_id, row.channel.channel_id)"
-                @click="toggleChannelLock(row.item, row.channel)"
+                :disabled="isChannelFreezeLoading(row.item.model_id, row.channel.channel_id)"
+                @click="toggleChannelFreeze(row.item, row.channel)"
                 :class="[
                   'flex min-w-[44px] flex-col items-center gap-0.5 rounded-lg px-2 py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                  row.channel.is_locked
-                    ? 'bg-amber-50/80 text-amber-600 hover:bg-amber-100/80 dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-900/35'
-                    : 'text-gray-500 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/20 dark:hover:text-amber-400'
+                  row.channel.is_frozen
+                    ? 'bg-sky-50/80 text-sky-600 hover:bg-sky-100/80 dark:bg-sky-900/20 dark:text-sky-400 dark:hover:bg-sky-900/35'
+                    : 'text-gray-500 hover:bg-sky-50 hover:text-sky-600 dark:hover:bg-sky-900/20 dark:hover:text-sky-400'
                 ]"
                 :title="
-                  row.channel.is_locked
-                    ? t('admin.modelPricing.lock.unlockHint')
-                    : t('admin.modelPricing.lock.lockHint')
+                  row.channel.is_frozen
+                    ? t('admin.modelPricing.freeze.unfreezeHint')
+                    : t('admin.modelPricing.freeze.freezeHint')
                 "
               >
-                <Icon :name="row.channel.is_locked ? 'lock' : 'unlock'" size="sm" />
+                <Icon name="snowflake" size="sm" />
                 <span class="text-xs">
-                  {{ row.channel.is_locked ? t('admin.modelPricing.actions.unlock') : t('admin.modelPricing.actions.lock') }}
+                  {{ row.channel.is_frozen ? t('admin.modelPricing.actions.unfreeze') : t('admin.modelPricing.actions.freeze') }}
                 </span>
               </button>
               <button
@@ -582,7 +590,7 @@
                 <span class="text-xs">{{ t('admin.modelPricing.actions.edit') }}</span>
               </button>
               <button
-                v-if="row.channel.is_overridden || row.channel.is_locked"
+                v-if="row.channel.is_overridden || row.channel.is_frozen"
                 type="button"
                 @click="promptResetChannel(row.item, row.channel)"
                 class="flex min-w-[44px] flex-col items-center gap-0.5 rounded-lg px-2 py-1.5 text-gray-500 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/20 dark:hover:text-amber-400"
@@ -729,21 +737,21 @@
           </div>
         </div>
 
-        <!-- Channel-level Auto-Sync Lock Switch (shown for Default & Channel edits, not Group overrides) -->
+        <!-- Channel-level Auto-Sync Freeze Switch (shown for Default & Channel edits, not Group overrides) -->
         <div
-          v-if="showEditLockToggle"
+          v-if="showEditFreezeToggle"
           class="flex items-center justify-between gap-4 rounded-xl border border-gray-200 p-3.5 dark:border-dark-700"
         >
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-white">
-              <Icon name="lock" size="sm" class="text-amber-500" />
-              <span>{{ t('admin.modelPricing.editModal.lockLabel') }}</span>
+              <Icon name="snowflake" size="sm" class="text-sky-500" />
+              <span>{{ t('admin.modelPricing.editModal.freezeLabel') }}</span>
             </div>
             <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.modelPricing.editModal.lockHint') }}
+              {{ t('admin.modelPricing.editModal.freezeHint') }}
             </p>
           </div>
-          <Toggle v-model="editForm.locked" />
+          <Toggle v-model="editForm.frozen" />
         </div>
 
         <!-- Collapsible Advanced Pricing Options -->
@@ -844,8 +852,8 @@
         <p class="text-xs text-gray-600 dark:text-gray-300">
           {{
             t('admin.modelPricing.syncConfirmModal.summary', {
-              locked: syncStatus?.locked_channel_count ?? 0,
-              unlocked: syncStatus?.unlocked_custom_count ?? 0
+              frozen: syncStatus?.frozen_channel_count ?? 0,
+              unfrozen: syncStatus?.unfrozen_custom_count ?? 0
             })
           }}
         </p>
@@ -854,7 +862,7 @@
           <label
             :class="[
               'flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors',
-              syncOverwriteMode === 'skip_locked'
+              syncOverwriteMode === 'skip_frozen'
                 ? 'border-primary-500 bg-primary-50/60 dark:border-primary-500 dark:bg-primary-900/20'
                 : 'border-gray-200 hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800/60'
             ]"
@@ -862,15 +870,15 @@
             <input
               v-model="syncOverwriteMode"
               type="radio"
-              value="skip_locked"
+              value="skip_frozen"
               class="mt-0.5 h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500"
             />
             <div class="min-w-0">
               <div class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ t('admin.modelPricing.syncConfirmModal.skipLockedTitle') }}
+                {{ t('admin.modelPricing.syncConfirmModal.skipFrozenTitle') }}
               </div>
               <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.modelPricing.syncConfirmModal.skipLockedDesc') }}
+                {{ t('admin.modelPricing.syncConfirmModal.skipFrozenDesc') }}
               </p>
             </div>
           </label>
@@ -1060,12 +1068,12 @@ const pageSize = ref(50)
 
 const selectedGroupId = ref<number>(0)
 const selectedPlatform = ref<string>('all')
-const statusFilter = ref<'all' | 'overridden' | 'custom' | 'locked' | 'missing'>('all')
+const statusFilter = ref<'all' | 'overridden' | 'custom' | 'frozen' | 'missing'>('all')
 const searchQuery = ref('')
 
 // Expanded model IDs for Level 2 channel sub-rows
 const expandedModelIds = ref<Set<string>>(new Set())
-const lockLoadingKeys = ref<Set<string>>(new Set())
+const freezeLoadingKeys = ref<Set<string>>(new Set())
 
 // Edit dialog state (supports Default, System Group, and Account-Type Channel)
 const showEditDialog = ref(false)
@@ -1077,7 +1085,7 @@ const editingChannel = ref<AccountChannelPriceEntry | null>(null)
 // Sync dialogs state
 const showSyncDialog = ref(false)
 const showSyncConfirmDialog = ref(false)
-const syncOverwriteMode = ref<PricingSyncOverwriteMode>('skip_locked')
+const syncOverwriteMode = ref<PricingSyncOverwriteMode>('skip_frozen')
 
 // Reset confirmation state
 const showResetConfirm = ref(false)
@@ -1088,7 +1096,7 @@ const editForm = reactive({
   model_id: '',
   platform: 'anthropic',
   display_name: '',
-  locked: true,
+  frozen: true,
   input_per_million: 0,
   output_per_million: 0,
   cache_read_per_million: 0,
@@ -1201,7 +1209,7 @@ const statusFilterOptions = computed(() => [
   { value: 'missing', label: t('admin.modelPricing.filterMissing') },
   { value: 'overridden', label: t('admin.modelPricing.filterOverridden') },
   { value: 'custom', label: t('admin.modelPricing.filterCustom') },
-  { value: 'locked', label: t('admin.modelPricing.filterLocked') }
+  { value: 'frozen', label: t('admin.modelPricing.filterFrozen') }
 ])
 
 const syncIntervalOptions = computed(() =>
@@ -1233,7 +1241,7 @@ const editScopeBanner = computed(() => {
   return t('admin.modelPricing.editModal.scopeDefault')
 })
 
-const showEditLockToggle = computed(() => {
+const showEditFreezeToggle = computed(() => {
   if (editingChannel.value) return true
   if (selectedGroup.value) return false
   return !isCreatingModel.value && !editingIsCustomOnly.value
@@ -1285,8 +1293,8 @@ function toggleModelExpand(modelId: string) {
   expandedModelIds.value = next
 }
 
-function isChannelLockLoading(modelId: string, channelId: string): boolean {
-  return lockLoadingKeys.value.has(`${modelId}:${channelId}`)
+function isChannelFreezeLoading(modelId: string, channelId: string): boolean {
+  return freezeLoadingKeys.value.has(`${modelId}:${channelId}`)
 }
 
 function getOtherChannels(item: ModelPricingListItem): AccountChannelPriceEntry[] {
@@ -1390,7 +1398,7 @@ function canResetModelRow(item: ModelPricingListItem): boolean {
   if (selectedGroupId.value > 0) {
     return item.is_group_overridden
   }
-  return item.is_default_modified || item.is_default_locked || item.is_custom_only
+  return item.is_default_modified || item.is_default_frozen || item.is_custom_only
 }
 
 async function loadStatus() {
@@ -1425,15 +1433,15 @@ async function loadModels() {
     if (res.platforms?.length) {
       platforms.value = res.platforms
     }
-    // Auto-expand multi-channel rows when locked filter or channel search matches a non-default channel
+    // Auto-expand multi-channel rows when frozen filter or channel search matches a non-default channel
     const needle = searchQuery.value.trim().toLowerCase()
-    if (statusFilter.value === 'locked' || needle) {
+    if (statusFilter.value === 'frozen' || needle) {
       const nextExpanded = new Set(expandedModelIds.value)
       let changed = false
       for (const item of items.value) {
         const others = getOtherChannels(item)
         if (others.length === 0) continue
-        const matchLockedOther = statusFilter.value === 'locked' && others.some((ch) => ch.is_locked)
+        const matchFrozenOther = statusFilter.value === 'frozen' && others.some((ch) => ch.is_frozen)
         const matchSearchOther =
           Boolean(needle) &&
           !item.model_id.toLowerCase().includes(needle) &&
@@ -1443,7 +1451,7 @@ async function loadModels() {
               ch.channel_id.toLowerCase().includes(needle) ||
               ch.raw_model_id.toLowerCase().includes(needle)
           )
-        if ((matchLockedOther || matchSearchOther) && !nextExpanded.has(item.model_id)) {
+        if ((matchFrozenOther || matchSearchOther) && !nextExpanded.has(item.model_id)) {
           nextExpanded.add(item.model_id)
           changed = true
         }
@@ -1461,7 +1469,7 @@ async function loadModels() {
 }
 
 function openSyncConfirmDialog() {
-  syncOverwriteMode.value = 'skip_locked'
+  syncOverwriteMode.value = 'skip_frozen'
   showSyncConfirmDialog.value = true
 }
 
@@ -1472,7 +1480,7 @@ async function confirmSyncNow() {
     const res = await modelPricingAPI.syncNow(syncOverwriteMode.value)
     syncStatus.value = res
     showSyncConfirmDialog.value = false
-    const skipped = res.meta.last_skipped_locked ?? 0
+    const skipped = res.meta.last_skipped_frozen ?? 0
     const overwritten = res.meta.last_overwritten_count ?? 0
     if (skipped > 0 || overwritten > 0) {
       appStore.showSuccess(
@@ -1525,37 +1533,37 @@ async function saveSyncSettings() {
   }
 }
 
-async function setChannelLockState(modelId: string, channelId: string, nextLocked: boolean) {
+async function setChannelFreezeState(modelId: string, channelId: string, nextFrozen: boolean) {
   const key = `${modelId}:${channelId}`
-  if (lockLoadingKeys.value.has(key)) return
-  const next = new Set(lockLoadingKeys.value)
+  if (freezeLoadingKeys.value.has(key)) return
+  const next = new Set(freezeLoadingKeys.value)
   next.add(key)
-  lockLoadingKeys.value = next
+  freezeLoadingKeys.value = next
 
   try {
-    await modelPricingAPI.setChannelLock(modelId, channelId, nextLocked)
+    await modelPricingAPI.setChannelFreeze(modelId, channelId, nextFrozen)
     appStore.showSuccess(
-      nextLocked
-        ? t('admin.modelPricing.messages.lockUpdated')
-        : t('admin.modelPricing.messages.unlockUpdated')
+      nextFrozen
+        ? t('admin.modelPricing.messages.freezeUpdated')
+        : t('admin.modelPricing.messages.unfreezeUpdated')
     )
     await Promise.all([loadStatus(), loadModels()])
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : t('common.error')
     appStore.showError(message)
   } finally {
-    const done = new Set(lockLoadingKeys.value)
+    const done = new Set(freezeLoadingKeys.value)
     done.delete(key)
-    lockLoadingKeys.value = done
+    freezeLoadingKeys.value = done
   }
 }
 
-async function toggleDefaultLock(item: ModelPricingListItem) {
-  await setChannelLockState(item.model_id, item.default_channel_id || '', !item.is_default_locked)
+async function toggleDefaultFreeze(item: ModelPricingListItem) {
+  await setChannelFreezeState(item.model_id, item.default_channel_id || '', !item.is_default_frozen)
 }
 
-async function toggleChannelLock(item: ModelPricingListItem, channel: AccountChannelPriceEntry) {
-  await setChannelLockState(item.model_id, channel.channel_id, !channel.is_locked)
+async function toggleChannelFreeze(item: ModelPricingListItem, channel: AccountChannelPriceEntry) {
+  await setChannelFreezeState(item.model_id, channel.channel_id, !channel.is_frozen)
 }
 
 function openCreateDialog() {
@@ -1571,7 +1579,7 @@ function openCreateDialog() {
         ? selectedPlatform.value
         : 'anthropic'
   editForm.display_name = ''
-  editForm.locked = true
+  editForm.frozen = true
   editForm.input_per_million = 0
   editForm.output_per_million = 0
   editForm.cache_read_per_million = 0
@@ -1590,8 +1598,8 @@ function openEditModelDialog(item: ModelPricingListItem) {
   editForm.model_id = item.model_id
   editForm.platform = item.platform || 'anthropic'
   editForm.display_name = item.display_name || ''
-  editForm.locked =
-    item.is_default_modified || item.is_default_locked ? item.is_default_locked : true
+  editForm.frozen =
+    item.is_default_modified || item.is_default_frozen ? item.is_default_frozen : true
   editForm.input_per_million = item.effective_pricing.input_per_million ?? 0
   editForm.output_per_million = item.effective_pricing.output_per_million ?? 0
   editForm.cache_read_per_million = item.effective_pricing.cache_read_per_million ?? 0
@@ -1622,7 +1630,7 @@ function openEditChannelDialog(item: ModelPricingListItem, channel: AccountChann
   editForm.model_id = item.model_id
   editForm.platform = item.platform || 'anthropic'
   editForm.display_name = item.display_name || ''
-  editForm.locked = channel.is_overridden || channel.is_locked ? channel.is_locked : true
+  editForm.frozen = channel.is_overridden || channel.is_frozen ? channel.is_frozen : true
   editForm.input_per_million = channel.pricing.input_per_million ?? 0
   editForm.output_per_million = channel.pricing.output_per_million ?? 0
   editForm.cache_read_per_million = channel.pricing.cache_read_per_million ?? 0
@@ -1658,7 +1666,7 @@ async function saveEditPricing() {
       model_id: editForm.model_id.trim(),
       platform: editForm.platform,
       display_name: isChannelScope ? undefined : editForm.display_name.trim() || undefined,
-      locked: showEditLockToggle.value ? editForm.locked : undefined,
+      frozen: showEditFreezeToggle.value ? editForm.frozen : undefined,
       input_per_million: Number(editForm.input_per_million) || 0,
       output_per_million: Number(editForm.output_per_million) || 0,
       cache_read_per_million: Number(editForm.cache_read_per_million) || 0,

@@ -206,14 +206,14 @@ func TestInventoryDrivenPricingLifecycleAndNullVsZero(t *testing.T) {
 	require.Equal(t, "default_auto", freeList.Items[0].Source)
 	require.False(t, freeList.Items[0].IsPricingMissing)
 
-	// Cannot lock a missing_pricing model before setting a price
-	require.Error(t, svc.SetChannelPriceLock(ctx, "claude-future-beta", "", true))
+	// Cannot freeze a missing_pricing model before setting a price
+	require.Error(t, svc.SetChannelPriceFreeze(ctx, "claude-future-beta", "", true))
 
-	// 3. Admin explicitly sets $0 free override on claude-future-beta (unlocked) -> clears missing_pricing!
-	unlocked := false
+	// 3. Admin explicitly sets $0 free override on claude-future-beta (unfrozen) -> clears missing_pricing!
+	unfrozen := false
 	require.NoError(t, svc.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		ModelID: "claude-future-beta",
-		Locked:  &unlocked,
+		Frozen:  &unfrozen,
 		Custom:  TokenPricingPerMillion{InputPerMillion: 0, OutputPerMillion: 0},
 	}))
 	require.Equal(t, 0, svc.GetSyncStatus().MissingPricingCount)
@@ -233,7 +233,7 @@ func TestInventoryDrivenPricingLifecycleAndNullVsZero(t *testing.T) {
 
 	// 4. Upstream models.dev later adds pricing for claude-future-beta -> SyncNow auto-backfills it!
 	remote.body = []byte(inventoryModelsDevBackfilled)
-	syncStatus, err := svc.SyncNowWithMode(ctx, PricingSyncOverwriteSkipLocked)
+	syncStatus, err := svc.SyncNowWithMode(ctx, PricingSyncOverwriteSkipFrozen)
 	require.NoError(t, err)
 	require.Equal(t, 0, syncStatus.MissingPricingCount)
 	backfilled := svc.GetModelPricing("claude-future-beta")
@@ -244,10 +244,10 @@ func TestInventoryDrivenPricingLifecycleAndNullVsZero(t *testing.T) {
 	// 5. Option A cleanup: set Default + Group overrides on claude-opus-5, then remove claude-opus-5 from accounts.
 	//    Both catalog rows AND all overrides for claude-opus-5 must be deleted without extra remote calls.
 	gid := int64(42)
-	lockedTrue := true
+	frozenTrue := true
 	require.NoError(t, svc.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		ModelID: "claude-opus-5",
-		Locked:  &lockedTrue,
+		Frozen:  &frozenTrue,
 		Custom:  TokenPricingPerMillion{InputPerMillion: 3.0, OutputPerMillion: 15.0},
 	}))
 	require.NoError(t, svc.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{

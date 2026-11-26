@@ -1,6 +1,6 @@
 import { apiClient } from '../client'
 
-export type PricingSyncOverwriteMode = 'skip_locked' | 'overwrite_all'
+export type PricingSyncOverwriteMode = 'skip_frozen' | 'overwrite_all'
 
 export interface PricingSyncConfig {
   auto_sync_enabled: boolean
@@ -16,7 +16,7 @@ export interface PricingSyncMetadata {
   channel_count: number
   model_count: number
   raw_entry_count: number
-  last_skipped_locked?: number
+  last_skipped_frozen?: number
   last_overwritten_count?: number
 }
 
@@ -25,8 +25,8 @@ export interface PricingSyncStatus {
   meta: PricingSyncMetadata
   default_override_count: number
   channel_override_count: number
-  locked_channel_count: number
-  unlocked_custom_count: number
+  frozen_channel_count: number
+  unfrozen_custom_count: number
   missing_pricing_count: number
   group_override_counts: Record<string, number>
   cache_loaded: boolean
@@ -52,7 +52,7 @@ export interface AccountChannelPriceEntry {
   raw_model_id: string
   is_default: boolean
   is_overridden: boolean
-  is_locked: boolean
+  is_frozen: boolean
   pricing: TokenPricingPerMillion
   synced_pricing?: TokenPricingPerMillion
   updated_at?: string
@@ -81,7 +81,7 @@ export interface ModelPricingListItem {
   source: ModelPricingSource
   is_group_overridden: boolean
   is_default_modified: boolean
-  is_default_locked: boolean
+  is_default_frozen: boolean
   is_custom_only: boolean
   is_pricing_missing: boolean
   default_channel_id?: string
@@ -91,7 +91,7 @@ export interface ModelPricingListItem {
   default_pricing?: TokenPricingPerMillion
   group_override_count: number
   channel_override_count: number
-  locked_channel_count: number
+  frozen_channel_count: number
   updated_at?: string
 }
 
@@ -108,7 +108,7 @@ export interface ModelPricingListParams {
   group_id?: number | null
   platform?: string
   search?: string
-  filter?: 'all' | 'overridden' | 'custom' | 'locked' | 'missing'
+  filter?: 'all' | 'overridden' | 'custom' | 'frozen' | 'missing'
   page?: number
   page_size?: number
 }
@@ -119,7 +119,7 @@ export interface UpsertModelPricingOverrideRequest {
   model_id: string
   platform?: string
   display_name?: string
-  locked?: boolean
+  frozen?: boolean
   input_per_million: number
   output_per_million: number
   cache_read_per_million: number
@@ -150,7 +150,7 @@ export const modelPricingAPI = {
   },
 
   async syncNow(
-    overwriteMode: PricingSyncOverwriteMode = 'skip_locked'
+    overwriteMode: PricingSyncOverwriteMode = 'skip_frozen'
   ): Promise<PricingSyncStatus> {
     const { data } = await apiClient.post<PricingSyncStatus>('/admin/model-pricing/sync', {
       overwrite_mode: overwriteMode
@@ -194,15 +194,15 @@ export const modelPricingAPI = {
     return data
   },
 
-  async setChannelLock(
+  async setChannelFreeze(
     modelId: string,
     channelId: string,
-    locked: boolean
+    frozen: boolean
   ): Promise<{ message: string }> {
-    const { data } = await apiClient.put<{ message: string }>('/admin/model-pricing/lock', {
+    const { data } = await apiClient.put<{ message: string }>('/admin/model-pricing/freeze', {
       model_id: modelId,
       channel_id: channelId,
-      locked
+      frozen
     })
     return data
   }

@@ -323,20 +323,20 @@ func TestPricingDatabasePersistenceAcrossRestartAndReconcile(t *testing.T) {
 	_, err := svc1.SyncNow(ctx)
 	require.NoError(t, err)
 
-	// Edit & lock Bedrock channel, edit unlocked Default, edit Group 7 override
-	lockTrue := true
-	lockFalse := false
+	// Edit & freeze Bedrock channel, edit unfrozen Default, edit Group 7 override
+	freezeTrue := true
+	freezeFalse := false
 	gid := int64(7)
 	require.NoError(t, svc1.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		ChannelID: "amazon-bedrock",
 		ModelID:   "claude-opus-5",
 		Custom:    TokenPricingPerMillion{InputPerMillion: 4.8, OutputPerMillion: 24},
-		Locked:    &lockTrue,
+		Frozen:    &freezeTrue,
 	}))
 	require.NoError(t, svc1.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		ModelID: "claude-opus-5",
 		Custom:  TokenPricingPerMillion{InputPerMillion: 4.2, OutputPerMillion: 21},
-		Locked:  &lockFalse,
+		Frozen:  &freezeFalse,
 	}))
 	require.NoError(t, svc1.UpsertCustomPricingWithOptions(ctx, UpsertPricingOverrideInput{
 		GroupID: &gid,
@@ -356,7 +356,7 @@ func TestPricingDatabasePersistenceAcrossRestartAndReconcile(t *testing.T) {
 	require.NoError(t, svc2.Initialize())
 	t.Cleanup(func() { svc2.Stop() })
 
-	// Default custom, Bedrock locked custom, and Group 7 custom all restored cleanly
+	// Default custom, Bedrock frozen custom, and Group 7 custom all restored cleanly
 	pDef := svc2.GetModelPricing("claude-opus-5")
 	require.NotNil(t, pDef)
 	require.InDelta(t, 4.2e-6, pDef.InputCostPerToken, 1e-12)
@@ -369,7 +369,7 @@ func TestPricingDatabasePersistenceAcrossRestartAndReconcile(t *testing.T) {
 	require.True(t, ok)
 	require.InDelta(t, 2.5e-6, pGrp.InputCostPerToken, 1e-12)
 
-	// Re-sync with skip_locked: unlocked default cleared, locked Bedrock & Group 7 kept
+	// Re-sync with skip_frozen: unfrozen default cleared, frozen Bedrock & Group 7 kept
 	updatedJSON := `{
 		"anthropic": {
 			"id": "anthropic",
@@ -401,12 +401,12 @@ func TestPricingDatabasePersistenceAcrossRestartAndReconcile(t *testing.T) {
 	}`
 	remote.body = []byte(updatedJSON)
 
-	status, err := svc2.SyncNowWithMode(ctx, PricingSyncOverwriteSkipLocked)
+	status, err := svc2.SyncNowWithMode(ctx, PricingSyncOverwriteSkipFrozen)
 	require.NoError(t, err)
-	require.Equal(t, 1, status.Meta.LastSkippedLocked)
+	require.Equal(t, 1, status.Meta.LastSkippedFrozen)
 	require.Equal(t, 1, status.Meta.LastOverwrittenCount)
 
-	// Default reverted to freshly synced 6.0; Bedrock stayed locked at 4.8; Group 7 stayed at 2.5
+	// Default reverted to freshly synced 6.0; Bedrock stayed frozen at 4.8; Group 7 stayed at 2.5
 	require.InDelta(t, 6.0e-6, svc2.GetModelPricing("claude-opus-5").InputCostPerToken, 1e-12)
 	pBedrockAfter, ok := svc2.GetModelPricingForProvider("amazon-bedrock", "claude-opus-5", "us.anthropic.claude-opus-5-v1:0")
 	require.True(t, ok)
@@ -415,7 +415,7 @@ func TestPricingDatabasePersistenceAcrossRestartAndReconcile(t *testing.T) {
 	require.True(t, ok)
 	require.InDelta(t, 2.5e-6, pGrpAfter.InputCostPerToken, 1e-12)
 
-	// Unlock & reset Bedrock -> falls back to exact Bedrock regional US price (6.6)
+	// Unfreeze & reset Bedrock -> falls back to exact Bedrock regional US price (6.6)
 	require.NoError(t, svc2.ResetModelPricingWithScope(ctx, nil, "amazon-bedrock", "claude-opus-5"))
 	pBedrockUS, ok := svc2.GetModelPricingForProvider("amazon-bedrock", "claude-opus-5", "us.anthropic.claude-opus-5-v1:0")
 	require.True(t, ok)

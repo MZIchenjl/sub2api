@@ -34,7 +34,7 @@ type updatePricingSyncConfigRequest struct {
 }
 
 type syncModelPricingRequest struct {
-	OverwriteMode string `json:"overwrite_mode"` // "skip_locked" (default) | "overwrite_all"
+	OverwriteMode string `json:"overwrite_mode"` // "skip_frozen" (default) | "overwrite_all"
 }
 
 type upsertModelPricingOverrideRequest struct {
@@ -43,7 +43,7 @@ type upsertModelPricingOverrideRequest struct {
 	ModelID                string   `json:"model_id" binding:"required"`
 	Platform               string   `json:"platform"`
 	DisplayName            string   `json:"display_name"`
-	Locked                 *bool    `json:"locked"`
+	Frozen                 *bool    `json:"frozen"`
 	InputPerMillion        float64  `json:"input_per_million"`
 	OutputPerMillion       float64  `json:"output_per_million"`
 	CacheReadPerMillion    float64  `json:"cache_read_per_million"`
@@ -54,10 +54,10 @@ type upsertModelPricingOverrideRequest struct {
 	LongContextOutputMult  float64  `json:"long_context_output_multiplier"`
 }
 
-type setChannelPriceLockRequest struct {
+type setChannelPriceFreezeRequest struct {
 	ModelID   string `json:"model_id" binding:"required"`
 	ChannelID string `json:"channel_id"`
-	Locked    bool   `json:"locked"`
+	Frozen    bool   `json:"frozen"`
 }
 
 // GetStatus returns models.dev sync configuration, metadata, and per-group override summaries.
@@ -87,8 +87,8 @@ func (h *ModelPricingHandler) UpdateSyncConfig(c *gin.Context) {
 	response.Success(c, status)
 }
 
-// SyncNow triggers an immediate manual sync from models.dev (filtered to system-supported models),
-// applying the user-confirmed overwrite_mode ("skip_locked" or "overwrite_all").
+// SyncNow triggers an immediate manual sync from models.dev (filtered to active models),
+// applying the user-confirmed overwrite_mode ("skip_frozen" or "overwrite_all").
 // POST /api/v1/admin/model-pricing/sync
 func (h *ModelPricingHandler) SyncNow(c *gin.Context) {
 	var req syncModelPricingRequest
@@ -98,7 +98,7 @@ func (h *ModelPricingHandler) SyncNow(c *gin.Context) {
 	}
 	mode := strings.TrimSpace(req.OverwriteMode)
 	if mode == "" {
-		mode = service.PricingSyncOverwriteSkipLocked
+		mode = service.PricingSyncOverwriteSkipFrozen
 	}
 	status, err := h.pricingService.SyncNowWithMode(c.Request.Context(), mode)
 	if err != nil {
@@ -162,7 +162,7 @@ func (h *ModelPricingHandler) UpsertOverride(c *gin.Context) {
 		ChannelID: req.ChannelID,
 		ModelID:   req.ModelID,
 		Platform:  platform,
-		Locked:    req.Locked,
+		Frozen:    req.Frozen,
 		Custom: service.TokenPricingPerMillion{
 			DisplayName:            req.DisplayName,
 			InputPerMillion:        req.InputPerMillion,
@@ -182,7 +182,7 @@ func (h *ModelPricingHandler) UpsertOverride(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Model pricing saved successfully"})
 }
 
-// ResetOverride removes a custom override / lock (for Default, Account-Type Channel, or System Group).
+// ResetOverride removes a custom override / freeze (for Default, Account-Type Channel, or System Group).
 // DELETE /api/v1/admin/model-pricing/override?model_id=...&group_id=...&channel_id=...
 func (h *ModelPricingHandler) ResetOverride(c *gin.Context) {
 	modelID := strings.TrimSpace(c.Query("model_id"))
@@ -210,18 +210,18 @@ func (h *ModelPricingHandler) ResetOverride(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Model pricing reset successfully"})
 }
 
-// SetChannelLock locks or unlocks a specific (model_id, channel_id) price so automatic sync
-// skips locked channels on subsequent updates.
-// PUT /api/v1/admin/model-pricing/lock
-func (h *ModelPricingHandler) SetChannelLock(c *gin.Context) {
-	var req setChannelPriceLockRequest
+// SetChannelFreeze freezes or unfreezes a specific (model_id, channel_id) price so automatic sync
+// skips frozen channels on subsequent updates.
+// PUT /api/v1/admin/model-pricing/freeze
+func (h *ModelPricingHandler) SetChannelFreeze(c *gin.Context) {
+	var req setChannelPriceFreezeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.ErrorFrom(c, infraerrors.BadRequest("INVALID_REQUEST", err.Error()))
 		return
 	}
-	if err := h.pricingService.SetChannelPriceLock(c.Request.Context(), req.ModelID, req.ChannelID, req.Locked); err != nil {
-		response.ErrorFrom(c, infraerrors.BadRequest("INVALID_LOCK_REQUEST", err.Error()))
+	if err := h.pricingService.SetChannelPriceFreeze(c.Request.Context(), req.ModelID, req.ChannelID, req.Frozen); err != nil {
+		response.ErrorFrom(c, infraerrors.BadRequest("INVALID_FREEZE_REQUEST", err.Error()))
 		return
 	}
-	response.Success(c, gin.H{"message": "Channel price lock updated"})
+	response.Success(c, gin.H{"message": "Channel price freeze updated"})
 }

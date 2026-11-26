@@ -42,7 +42,7 @@ type ModelPricingCatalogRecord struct {
 	SyncedAt                      time.Time
 }
 
-// ModelPricingOverrideRecord represents one scoped custom price override or lock row in PostgreSQL.
+// ModelPricingOverrideRecord represents one scoped custom price override or frozen price row in PostgreSQL.
 type ModelPricingOverrideRecord struct {
 	Scope                         string // "default" | "channel" | "group"
 	ScopeID                       string // "" for default, channel_id for channel, group_id string for group
@@ -58,7 +58,7 @@ type ModelPricingOverrideRecord struct {
 	LongContextThreshold          int
 	LongContextInputMult          float64
 	LongContextOutputMult         float64
-	Locked                        bool
+	Frozen                        bool
 	IsCustom                      bool
 	UpdatedAt                     time.Time
 }
@@ -70,7 +70,7 @@ type ModelPricingOverrideKey struct {
 	ModelID string
 }
 
-// ModelPricingRepository persists the active models.dev catalog and scoped overrides/locks in PostgreSQL.
+// ModelPricingRepository persists the active models.dev catalog and scoped overrides/freezes in PostgreSQL.
 type ModelPricingRepository interface {
 	ListCatalogEntries(ctx context.Context) ([]ModelPricingCatalogRecord, error)
 	ListOverrides(ctx context.Context) ([]ModelPricingOverrideRecord, error)

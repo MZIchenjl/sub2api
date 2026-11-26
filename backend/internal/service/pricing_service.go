@@ -37,7 +37,7 @@ const (
 	PricingSyncStatusSuccess = "success"
 	PricingSyncStatusFailed  = "failed"
 
-	PricingSyncOverwriteSkipLocked = "skip_locked"
+	PricingSyncOverwriteSkipFrozen = "skip_frozen"
 	PricingSyncOverwriteAll        = "overwrite_all"
 
 	tokensPerMillion = 1_000_000.0
@@ -495,18 +495,18 @@ type PricingSyncMetadata struct {
 	ChannelCount         int        `json:"channel_count"`
 	ModelCount           int        `json:"model_count"`
 	RawEntryCount        int        `json:"raw_entry_count"`
-	LastSkippedLocked    int        `json:"last_skipped_locked,omitempty"`
+	LastSkippedFrozen    int        `json:"last_skipped_frozen,omitempty"`
 	LastOverwrittenCount int        `json:"last_overwritten_count,omitempty"`
 }
 
-// PricingSyncStatus aggregates sync config, metadata, and override/lock counts for the admin UI.
+// PricingSyncStatus aggregates sync config, metadata, and override/freeze counts for the admin UI.
 type PricingSyncStatus struct {
 	Config               PricingSyncConfig   `json:"config"`
 	Meta                 PricingSyncMetadata `json:"meta"`
 	DefaultOverrideCount int                 `json:"default_override_count"`
 	ChannelOverrideCount int                 `json:"channel_override_count"`
-	LockedChannelCount   int                 `json:"locked_channel_count"`
-	UnlockedCustomCount  int                 `json:"unlocked_custom_count"`
+	FrozenChannelCount   int                 `json:"frozen_channel_count"`
+	UnfrozenCustomCount  int                 `json:"unfrozen_custom_count"`
 	MissingPricingCount  int                 `json:"missing_pricing_count"`
 	GroupOverrideCounts  map[string]int      `json:"group_override_counts"`
 	CacheLoaded          bool                `json:"cache_loaded"`
@@ -526,17 +526,17 @@ type TokenPricingPerMillion struct {
 	LongContextOutputMult         float64  `json:"long_context_output_multiplier,omitempty"`
 }
 
-// ModelPricingOverride stores a custom price override or locked price snapshot
+// ModelPricingOverride stores a custom price override or frozen price snapshot
 // in Default, Account-Type Channel, or System Group scope.
 type ModelPricingOverride struct {
 	Platform  string                 `json:"platform,omitempty"`
 	Custom    TokenPricingPerMillion `json:"custom"`
-	Locked    bool                   `json:"locked,omitempty"`
+	Frozen    bool                   `json:"frozen,omitempty"`
 	IsCustom  bool                   `json:"is_custom,omitempty"`
 	UpdatedAt time.Time              `json:"updated_at"`
 }
 
-// PricingOverridesState persists global default edits/locks, per-channel edits/locks,
+// PricingOverridesState persists global default edits/freezes, per-channel edits/freezes,
 // and per-system-group independent pricing overrides.
 type PricingOverridesState struct {
 	Default  map[string]ModelPricingOverride            `json:"default"`
@@ -551,11 +551,11 @@ type UpsertPricingOverrideInput struct {
 	ModelID   string
 	Platform  string
 	Custom    TokenPricingPerMillion
-	Locked    *bool
+	Frozen    *bool
 }
 
 // AccountChannelPriceEntry represents one account-type matched channel price cached from models.dev
-// (with any custom edit and/or sync lock applied).
+// (with any custom edit and/or price freeze applied).
 type AccountChannelPriceEntry struct {
 	ChannelID     string                  `json:"channel_id"`
 	ChannelName   string                  `json:"channel_name"`
@@ -563,7 +563,7 @@ type AccountChannelPriceEntry struct {
 	RawModelID    string                  `json:"raw_model_id"`
 	IsDefault     bool                    `json:"is_default"`
 	IsOverridden  bool                    `json:"is_overridden"`
-	IsLocked      bool                    `json:"is_locked"`
+	IsFrozen      bool                    `json:"is_frozen"`
 	Pricing       TokenPricingPerMillion  `json:"pricing"`
 	SyncedPricing *TokenPricingPerMillion `json:"synced_pricing,omitempty"`
 	UpdatedAt     *time.Time              `json:"updated_at,omitempty"`
@@ -602,7 +602,7 @@ type ModelPricingListQuery struct {
 	GroupPlatform string // resolved from system GroupRepository when GroupID > 0
 	Platform      string // optional platform filter (used when GroupID == 0 or composite group)
 	Search        string
-	Filter        string // "all" | "overridden" | "custom" | "locked" | "missing"
+	Filter        string // "all" | "overridden" | "custom" | "frozen" | "missing"
 	Page          int
 	PageSize      int
 }
@@ -618,7 +618,7 @@ type ModelPricingListItem struct {
 	Source               string                     `json:"source"` // "default_auto" | "default_custom" | "inherited_default" | "group_custom" | "missing_pricing"
 	IsGroupOverridden    bool                       `json:"is_group_overridden"`
 	IsDefaultModified    bool                       `json:"is_default_modified"`
-	IsDefaultLocked      bool                       `json:"is_default_locked"`
+	IsDefaultFrozen      bool                       `json:"is_default_frozen"`
 	IsCustomOnly         bool                       `json:"is_custom_only"`
 	IsPricingMissing     bool                       `json:"is_pricing_missing"`
 	DefaultChannelID     string                     `json:"default_channel_id,omitempty"`
@@ -628,7 +628,7 @@ type ModelPricingListItem struct {
 	DefaultPricing       *TokenPricingPerMillion    `json:"default_pricing,omitempty"`
 	GroupOverrideCount   int                        `json:"group_override_count"`
 	ChannelOverrideCount int                        `json:"channel_override_count"`
-	LockedChannelCount   int                        `json:"locked_channel_count"`
+	FrozenChannelCount   int                        `json:"frozen_channel_count"`
 	UpdatedAt            *time.Time                 `json:"updated_at,omitempty"`
 }
 
@@ -642,7 +642,7 @@ type ModelPricingListResult struct {
 	Platforms     []SupportedPlatformSummary `json:"platforms"`
 }
 
-// PricingService 动态价格服务（基于 PostgreSQL 持久化 + 在用模型驱动同步 + 账户类型自动匹配渠道 + 独立改价/锁/分组覆盖）
+// PricingService 动态价格服务（基于 PostgreSQL 持久化 + 在用模型驱动同步 + 账户类型自动匹配渠道 + 独立改价/冻结/分组覆盖）
 type PricingService struct {
 	cfg               *config.Config
 	remoteClient      PricingRemoteClient
@@ -706,7 +706,7 @@ func (s *PricingService) SetSettingRepository(repo SettingRepository) {
 	s.mu.Unlock()
 }
 
-// SetModelPricingRepository attaches PostgreSQL table persistence for synced catalog entries and overrides/locks.
+// SetModelPricingRepository attaches PostgreSQL table persistence for synced catalog entries and overrides/freezes.
 func (s *PricingService) SetModelPricingRepository(repo ModelPricingRepository) {
 	if s == nil {
 		return
@@ -1090,7 +1090,7 @@ func (s *PricingService) loadPersistedState(ctx context.Context) {
 				if gid == "" {
 					continue
 				}
-				item.Locked = false
+				item.Frozen = false
 				if ov.Groups[gid] == nil {
 					ov.Groups[gid] = make(map[string]ModelPricingOverride)
 				}
@@ -1231,7 +1231,7 @@ func (s *PricingService) ReconcileWithInventory(ctx context.Context) error {
 
 	// Case 1: Empty system (0 active models) -> keep catalog and overrides empty without hitting upstream.
 	if len(inv.Models) == 0 {
-		return s.commitReconciledState(ctx, nil, inv, PricingSyncOverwriteSkipLocked, now, false)
+		return s.commitReconciledState(ctx, nil, inv, PricingSyncOverwriteSkipFrozen, now, false)
 	}
 
 	// Check whether any active model or active channel is missing from our current catalog.
@@ -1266,7 +1266,7 @@ func (s *PricingService) ReconcileWithInventory(ctx context.Context) error {
 	// Case 2: Only removals (no new models/channels) -> prune locally in DB without any network call.
 	if !needLookup {
 		pruned := filterCatalogRecordsForInventory(currentRecords, inv, now)
-		return s.commitReconciledState(ctx, pruned, inv, PricingSyncOverwriteSkipLocked, now, false)
+		return s.commitReconciledState(ctx, pruned, inv, PricingSyncOverwriteSkipFrozen, now, false)
 	}
 
 	// Case 3: New active models/channels appeared -> use fresh in-memory upstream snapshot, or fetch models.dev once.
@@ -1301,18 +1301,18 @@ func (s *PricingService) ReconcileWithInventory(ctx context.Context) error {
 		sourceRecords = currentRecords
 	}
 	filtered := filterCatalogRecordsForInventory(sourceRecords, inv, now)
-	return s.commitReconciledState(ctx, filtered, inv, PricingSyncOverwriteSkipLocked, now, fetchedRemote)
+	return s.commitReconciledState(ctx, filtered, inv, PricingSyncOverwriteSkipFrozen, now, fetchedRemote)
 }
 
 // SyncNow fetches models.dev/api.json, filters to active models & channels,
-// skips locked channel prices, updates unlocked entries, cleans unused models, and persists everything in PostgreSQL.
+// skips frozen channel prices, updates unfrozen entries, cleans unused models, and persists everything in PostgreSQL.
 func (s *PricingService) SyncNow(ctx context.Context) (*PricingSyncStatus, error) {
-	return s.SyncNowWithMode(ctx, PricingSyncOverwriteSkipLocked)
+	return s.SyncNowWithMode(ctx, PricingSyncOverwriteSkipFrozen)
 }
 
 // SyncNowWithMode performs a models.dev sync with explicit overwrite semantics:
-//   - "skip_locked" (default / auto-sync): keeps all locked channel prices untouched; updates unlocked entries.
-//   - "overwrite_all" (manual confirmed overwrite): overwrites all synced channel prices (including locked ones),
+//   - "skip_frozen" (default / auto-sync): keeps all frozen channel prices untouched; updates unfrozen entries.
+//   - "overwrite_all" (manual confirmed overwrite): overwrites all synced channel prices (including frozen ones),
 //     while preserving system group overrides and overrides for models missing from models.dev.
 func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode string) (*PricingSyncStatus, error) {
 	if s == nil {
@@ -1324,10 +1324,10 @@ func (s *PricingService) SyncNowWithMode(ctx context.Context, overwriteMode stri
 
 	mode := strings.ToLower(strings.TrimSpace(overwriteMode))
 	if mode == "" {
-		mode = PricingSyncOverwriteSkipLocked
+		mode = PricingSyncOverwriteSkipFrozen
 	}
-	if mode != PricingSyncOverwriteSkipLocked && mode != PricingSyncOverwriteAll {
-		return nil, fmt.Errorf("invalid overwrite_mode %q (expected %q or %q)", overwriteMode, PricingSyncOverwriteSkipLocked, PricingSyncOverwriteAll)
+	if mode != PricingSyncOverwriteSkipFrozen && mode != PricingSyncOverwriteAll {
+		return nil, fmt.Errorf("invalid overwrite_mode %q (expected %q or %q)", overwriteMode, PricingSyncOverwriteSkipFrozen, PricingSyncOverwriteAll)
 	}
 
 	s.syncMu.Lock()
@@ -1413,7 +1413,7 @@ func (s *PricingService) commitReconciledState(
 	models, providerModels, platformSummaries, channelCount, rawCount, hashStr := buildCatalogStateFromRecords(records, inv)
 
 	var deleteKeys []ModelPricingOverrideKey
-	skippedLocked := 0
+	skippedFrozen := 0
 	overwrittenCount := 0
 
 	s.mu.RLock()
@@ -1435,7 +1435,7 @@ func (s *PricingService) commitReconciledState(
 			// Active model missing from models.dev (or custom-only in standalone mode): keep user's manual price.
 			continue
 		}
-		if mode == PricingSyncOverwriteAll || !ov.Locked {
+		if mode == PricingSyncOverwriteAll || !ov.Frozen {
 			deleteKeys = append(deleteKeys, ModelPricingOverrideKey{
 				Scope:   PricingOverrideScopeDefault,
 				ScopeID: "",
@@ -1443,7 +1443,7 @@ func (s *PricingService) commitReconciledState(
 			})
 			overwrittenCount++
 		} else {
-			skippedLocked++
+			skippedFrozen++
 		}
 	}
 	for chID, chModels := range s.overrides.Channels {
@@ -1462,7 +1462,7 @@ func (s *PricingService) commitReconciledState(
 			if entry == nil || entry.PricingMissing || entry.channelByID[chID] == nil {
 				continue
 			}
-			if mode == PricingSyncOverwriteAll || !ov.Locked {
+			if mode == PricingSyncOverwriteAll || !ov.Frozen {
 				deleteKeys = append(deleteKeys, ModelPricingOverrideKey{
 					Scope:   PricingOverrideScopeChannel,
 					ScopeID: chID,
@@ -1470,7 +1470,7 @@ func (s *PricingService) commitReconciledState(
 				})
 				overwrittenCount++
 			} else {
-				skippedLocked++
+				skippedFrozen++
 			}
 		}
 	}
@@ -1535,7 +1535,7 @@ func (s *PricingService) commitReconciledState(
 		s.syncMeta.LastSyncAt = &syncTime
 		s.syncMeta.LastSyncStatus = PricingSyncStatusSuccess
 		s.syncMeta.LastSyncError = ""
-		s.syncMeta.LastSkippedLocked = skippedLocked
+		s.syncMeta.LastSkippedFrozen = skippedFrozen
 		s.syncMeta.LastOverwrittenCount = overwrittenCount
 	}
 	s.rebuildEffectiveDefaultLocked()
@@ -1546,8 +1546,8 @@ func (s *PricingService) commitReconciledState(
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to persist sync metadata: %v", err)
 	}
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Reconciled models.dev pricing in DB (%d channels, %d models, %d entries, skipped_locked=%d, overwritten=%d)",
-		metaCopy.ChannelCount, metaCopy.ModelCount, metaCopy.RawEntryCount, skippedLocked, overwrittenCount)
+	logger.LegacyPrintf("service.pricing", "[Pricing] Reconciled models.dev pricing in DB (%d channels, %d models, %d entries, skipped_frozen=%d, overwritten=%d)",
+		metaCopy.ChannelCount, metaCopy.ModelCount, metaCopy.RawEntryCount, skippedFrozen, overwrittenCount)
 	return nil
 }
 
@@ -1594,7 +1594,7 @@ func (s *PricingService) UpdateSyncConfig(ctx context.Context, next PricingSyncC
 	return s.GetSyncStatus(), nil
 }
 
-// GetSyncStatus returns the current sync config, metadata, and override/lock summary.
+// GetSyncStatus returns the current sync config, metadata, and override/freeze summary.
 func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1608,8 +1608,8 @@ func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 
 	defaultOverrideCount := 0
 	channelOverrideCount := 0
-	lockedChannelCount := 0
-	unlockedCustomCount := 0
+	frozenChannelCount := 0
+	unfrozenCustomCount := 0
 	missingPricingCount := 0
 
 	for modelID, entry := range s.models {
@@ -1621,29 +1621,29 @@ func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 	}
 
 	for modelID, ov := range s.overrides.Default {
-		isCustom := ov.IsCustom || !ov.Locked
+		isCustom := ov.IsCustom || !ov.Frozen
 		if isCustom {
 			defaultOverrideCount++
 		}
 		if entry := s.models[modelID]; entry != nil && !entry.PricingMissing {
-			if ov.Locked {
-				lockedChannelCount++
+			if ov.Frozen {
+				frozenChannelCount++
 			} else if isCustom {
-				unlockedCustomCount++
+				unfrozenCustomCount++
 			}
 		}
 	}
 	for chID, chModels := range s.overrides.Channels {
 		for modelID, ov := range chModels {
-			isCustom := ov.IsCustom || !ov.Locked
+			isCustom := ov.IsCustom || !ov.Frozen
 			if isCustom {
 				channelOverrideCount++
 			}
-			if ov.Locked {
-				lockedChannelCount++
+			if ov.Frozen {
+				frozenChannelCount++
 			} else if isCustom {
 				if entry := s.models[modelID]; entry != nil && !entry.PricingMissing && entry.channelByID[chID] != nil {
-					unlockedCustomCount++
+					unfrozenCustomCount++
 				}
 			}
 		}
@@ -1654,8 +1654,8 @@ func (s *PricingService) GetSyncStatus() *PricingSyncStatus {
 		Meta:                 s.syncMeta,
 		DefaultOverrideCount: defaultOverrideCount,
 		ChannelOverrideCount: channelOverrideCount,
-		LockedChannelCount:   lockedChannelCount,
-		UnlockedCustomCount:  unlockedCustomCount,
+		FrozenChannelCount:   frozenChannelCount,
+		UnfrozenCustomCount:  unfrozenCustomCount,
 		MissingPricingCount:  missingPricingCount,
 		GroupOverrideCounts:  groupCounts,
 		CacheLoaded:          len(s.models) > 0,
@@ -2375,7 +2375,7 @@ func (s *PricingService) rebuildEffectiveDefaultLocked() {
 	s.effectiveDefaultData = next
 }
 
-// --- Admin Mutations (Edit custom price for Default, Account-Type Channel, or System Group; Lock; Reset) ---
+// --- Admin Mutations (Edit custom price for Default, Account-Type Channel, or System Group; Freeze; Reset) ---
 
 // UpsertCustomPricing saves custom per-million-token prices for a model
 // (either in default scope when groupID == nil/<=0, or for a specific system group).
@@ -2410,15 +2410,15 @@ func (s *PricingService) UpsertCustomPricingWithOptions(ctx context.Context, opt
 	custom.DisplayName = strings.TrimSpace(custom.DisplayName)
 	platform := strings.ToLower(strings.TrimSpace(opts.Platform))
 
-	locked := true
-	if opts.Locked != nil {
-		locked = *opts.Locked
+	frozen := true
+	if opts.Frozen != nil {
+		frozen = *opts.Frozen
 	}
 
 	ov := ModelPricingOverride{
 		Platform:  platform,
 		Custom:    custom,
-		Locked:    locked,
+		Frozen:    frozen,
 		IsCustom:  true,
 		UpdatedAt: time.Now(),
 	}
@@ -2438,7 +2438,7 @@ func (s *PricingService) UpsertCustomPricingWithOptions(ctx context.Context, opt
 	var deleteKeys []ModelPricingOverrideKey
 	switch {
 	case hasGroup:
-		ov.Locked = false // system group overrides are always independent of models.dev sync
+		ov.Frozen = false // system group overrides are always independent of models.dev sync
 		scope = PricingOverrideScopeGroup
 		scopeID = strconv.FormatInt(*opts.GroupID, 10)
 
@@ -2517,9 +2517,9 @@ func (s *PricingService) UpsertCustomPricingWithOptions(ctx context.Context, opt
 	return nil
 }
 
-// SetChannelPriceLock locks or unlocks a specific (model_id, channel_id) channel price so automatic
-// sync skips locked channels on subsequent updates.
-func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, channelID string, locked bool) error {
+// SetChannelPriceFreeze freezes or unfreezes a specific (model_id, channel_id) channel price so automatic
+// sync skips frozen channels on subsequent updates.
+func (s *PricingService) SetChannelPriceFreeze(ctx context.Context, modelID, channelID string, frozen bool) error {
 	normID := NormalizeOriginalModelID(modelID)
 	if normID == "" {
 		return errors.New("model_id is required")
@@ -2547,13 +2547,13 @@ func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, chann
 		scope = PricingOverrideScopeDefault
 		scopeID = ""
 		existing, hasExisting := s.overrides.Default[normID]
-		if locked {
+		if frozen {
 			if hasExisting {
 				next := cloneModelPricingOverride(existing)
-				if !next.Locked {
+				if !next.Frozen {
 					next.IsCustom = true
 				}
-				next.Locked = true
+				next.Frozen = true
 				next.UpdatedAt = now
 				upsertRec = &next
 			} else {
@@ -2563,12 +2563,12 @@ func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, chann
 				}
 				if entry.PricingMissing {
 					s.mu.RUnlock()
-					return fmt.Errorf("model %q has missing pricing; set a price before locking", normID)
+					return fmt.Errorf("model %q has missing pricing; set a price before freezing", normID)
 				}
 				next := ModelPricingOverride{
 					Platform:  entry.Platform,
 					Custom:    entry.DefaultPricing,
-					Locked:    true,
+					Frozen:    true,
 					IsCustom:  false,
 					UpdatedAt: now,
 				}
@@ -2577,7 +2577,7 @@ func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, chann
 		} else if hasExisting {
 			if existing.IsCustom {
 				next := cloneModelPricingOverride(existing)
-				next.Locked = false
+				next.Frozen = false
 				next.UpdatedAt = now
 				upsertRec = &next
 			} else {
@@ -2600,13 +2600,13 @@ func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, chann
 		if chMap != nil {
 			existing, hasExisting = chMap[normID]
 		}
-		if locked {
+		if frozen {
 			if hasExisting {
 				next := cloneModelPricingOverride(existing)
-				if !next.Locked {
+				if !next.Frozen {
 					next.IsCustom = true
 				}
-				next.Locked = true
+				next.Frozen = true
 				next.UpdatedAt = now
 				upsertRec = &next
 			} else {
@@ -2617,7 +2617,7 @@ func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, chann
 				next := ModelPricingOverride{
 					Platform:  entry.Platform,
 					Custom:    chEntry.Pricing,
-					Locked:    true,
+					Frozen:    true,
 					IsCustom:  false,
 					UpdatedAt: now,
 				}
@@ -2626,7 +2626,7 @@ func (s *PricingService) SetChannelPriceLock(ctx context.Context, modelID, chann
 		} else if hasExisting {
 			if existing.IsCustom {
 				next := cloneModelPricingOverride(existing)
-				next.Locked = false
+				next.Frozen = false
 				next.UpdatedAt = now
 				upsertRec = &next
 			} else {
@@ -2694,10 +2694,10 @@ func (s *PricingService) ResetModelPricing(ctx context.Context, groupID *int64, 
 	return s.ResetModelPricingWithScope(ctx, groupID, "", modelID)
 }
 
-// ResetModelPricingWithScope resets a model's override/lock at Default, Channel, or Group scope:
+// ResetModelPricingWithScope resets a model's override/freeze at Default, Channel, or Group scope:
 //   - If groupID > 0: removes the group override so the group falls back to matched channel / default price.
-//   - If channelID != "": removes the channel override/lock (unified with Default if default channel).
-//   - Otherwise: removes the default override/lock (restores models.dev default, or deletes custom-only model).
+//   - If channelID != "": removes the channel override/freeze (unified with Default if default channel).
+//   - Otherwise: removes the default override/freeze (restores models.dev default, or deletes custom-only model).
 func (s *PricingService) ResetModelPricingWithScope(ctx context.Context, groupID *int64, channelID, modelID string) error {
 	normID := NormalizeOriginalModelID(modelID)
 	if normID == "" {
@@ -2842,7 +2842,7 @@ func modelPricingOverrideToRecord(scope, scopeID, modelID string, ov ModelPricin
 		LongContextThreshold:          ov.Custom.LongContextThreshold,
 		LongContextInputMult:          ov.Custom.LongContextInputMult,
 		LongContextOutputMult:         ov.Custom.LongContextOutputMult,
-		Locked:                        ov.Locked,
+		Frozen:                        ov.Frozen,
 		IsCustom:                      ov.IsCustom,
 		UpdatedAt:                     ov.UpdatedAt,
 	}
@@ -2850,7 +2850,7 @@ func modelPricingOverrideToRecord(scope, scopeID, modelID string, ov ModelPricin
 
 func overrideRecordToModelPricingOverride(rec ModelPricingOverrideRecord) ModelPricingOverride {
 	isCustom := rec.IsCustom
-	if !isCustom && !rec.Locked {
+	if !isCustom && !rec.Frozen {
 		isCustom = true
 	}
 	return ModelPricingOverride{
@@ -2867,7 +2867,7 @@ func overrideRecordToModelPricingOverride(rec ModelPricingOverrideRecord) ModelP
 			LongContextInputMult:          rec.LongContextInputMult,
 			LongContextOutputMult:         rec.LongContextOutputMult,
 		},
-		Locked:    rec.Locked,
+		Frozen:    rec.Frozen,
 		IsCustom:  isCustom,
 		UpdatedAt: rec.UpdatedAt,
 	}
@@ -2959,8 +2959,8 @@ func (s *PricingService) ListModelPricingCatalog(query ModelPricingListQuery) *M
 			if !item.IsCustomOnly && item.Source != "default_custom" && item.Source != "group_custom" && item.ChannelOverrideCount == 0 {
 				continue
 			}
-		case "locked":
-			if item.LockedChannelCount == 0 {
+		case "frozen":
+			if item.FrozenChannelCount == 0 {
 				continue
 			}
 		}
@@ -3043,7 +3043,7 @@ func (s *PricingService) buildListItemLocked(
 ) ModelPricingListItem {
 	entry := s.models[modelID]
 	defaultOv, hasDefaultOv := s.overrides.Default[modelID]
-	defaultIsCustom := hasDefaultOv && (defaultOv.IsCustom || !defaultOv.Locked)
+	defaultIsCustom := hasDefaultOv && (defaultOv.IsCustom || !defaultOv.Frozen)
 
 	platform := inferSystemPlatformForModel(modelID, "")
 	if hasDefaultOv && defaultOv.Platform != "" {
@@ -3058,7 +3058,7 @@ func (s *PricingService) buildListItemLocked(
 		IsCustomOnly:       entry == nil,
 		IsPricingMissing:   entry != nil && entry.PricingMissing && !hasDefaultOv,
 		IsDefaultModified:  defaultIsCustom,
-		IsDefaultLocked:    hasDefaultOv && defaultOv.Locked,
+		IsDefaultFrozen:    hasDefaultOv && defaultOv.Frozen,
 		GroupOverrideCount: groupOverrideCount,
 		ChannelPrices:      []AccountChannelPriceEntry{},
 	}
@@ -3086,7 +3086,7 @@ func (s *PricingService) buildListItemLocked(
 				if chCopy.IsDefault {
 					if hasDefaultOv {
 						chCopy.Pricing = defaultOv.Custom
-						chCopy.IsLocked = defaultOv.Locked
+						chCopy.IsFrozen = defaultOv.Frozen
 						chCopy.IsOverridden = defaultIsCustom
 						origCopy := origPricing
 						chCopy.SyncedPricing = &origCopy
@@ -3095,9 +3095,9 @@ func (s *PricingService) buildListItemLocked(
 					}
 				} else if cm := s.overrides.Channels[chCopy.ChannelID]; cm != nil {
 					if chOv, ok := cm[modelID]; ok {
-						chIsCustom := chOv.IsCustom || !chOv.Locked
+						chIsCustom := chOv.IsCustom || !chOv.Frozen
 						chCopy.Pricing = chOv.Custom
-						chCopy.IsLocked = chOv.Locked
+						chCopy.IsFrozen = chOv.Frozen
 						chCopy.IsOverridden = chIsCustom
 						origCopy := origPricing
 						chCopy.SyncedPricing = &origCopy
@@ -3108,8 +3108,8 @@ func (s *PricingService) buildListItemLocked(
 				if chCopy.IsOverridden {
 					item.ChannelOverrideCount++
 				}
-				if chCopy.IsLocked {
-					item.LockedChannelCount++
+				if chCopy.IsFrozen {
+					item.FrozenChannelCount++
 				}
 				item.ChannelPrices[i] = chCopy
 			}
@@ -3276,7 +3276,7 @@ func (s *PricingService) GetModelPricingForProvider(providerID, modelName, rawUp
 
 	entry := findEntry()
 
-	// 1. Explicit per-channel custom override or locked price snapshot always takes precedence for this channel.
+	// 1. Explicit per-channel custom override or frozen price snapshot always takes precedence for this channel.
 	if chMap := s.overrides.Channels[providerID]; len(chMap) > 0 {
 		if entry != nil {
 			if ov, ok := chMap[entry.ModelID]; ok {
@@ -3299,8 +3299,8 @@ func (s *PricingService) GetModelPricingForProvider(providerID, modelName, rawUp
 		return nil, false
 	}
 
-	// 2. If this account uses the model's default channel and the admin customized or locked the default price,
-	// let default custom/locked price take precedence cleanly.
+	// 2. If this account uses the model's default channel and the admin customized or froze the default price,
+	// let default custom/frozen price take precedence cleanly.
 	if providerID == entry.DefaultChannelID {
 		if _, hasDefaultOverride := s.overrides.Default[entry.ModelID]; hasDefaultOverride {
 			return nil, false
